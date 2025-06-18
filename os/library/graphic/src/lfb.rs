@@ -1,4 +1,5 @@
 use unifont::get_glyph;
+use crate::color;
 use crate::color::Color;
 
 pub struct LFB {
@@ -89,6 +90,17 @@ impl LFB {
         for i in y..end_y {
             for j in x..end_x {
                 self.draw_pixel(j, i, color);
+            }
+        }
+    }
+    
+    pub fn clear_screen(&self) {
+        let end_x = 0 + self.width;
+        let end_y = 0 + self.height;
+
+        for i in 0..end_y {
+            for j in 0..end_x {
+                self.draw_pixel(j, i, color::BLACK);
             }
         }
     }

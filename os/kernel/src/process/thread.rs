@@ -186,7 +186,7 @@ impl Thread {
             (MAIN_USER_STACK_START + MAX_USER_STACK_SIZE) as u64,
         ))
         .unwrap();
-    
+
         let user_stack_pages = PageRange {
             start: user_stack_end - 1,
             end: user_stack_end,

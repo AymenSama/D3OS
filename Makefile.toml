@@ -45,6 +45,10 @@ args = [
 
     # Audio configuration (Using pulse audio for Linux)
     "-audiodev", "id=audio0,driver=${QEMU_AUDIO_DEVICE}",
+
+    # Virtio-GPU support
+    "-device", "virtio-gpu-pci,id=vgpu",
+    #"-device", "virtio-gpu-pci,id=vgpu,max_outputs=2",
 ]
 
 [tasks.debug]
@@ -79,6 +83,10 @@ args = [
 
     # Audio configuration (Using pulse audio for Linux)
     "-audiodev", "id=audio0,driver=${QEMU_AUDIO_DEVICE}",
+
+    # Virtio-GPU support
+    "-device", "virtio-gpu-pci,id=vgpu",
+    #"-device", "virtio-gpu-pci,id=vgpu,max_outputs=2",
 
     # Debugging configuration
     "-S", "-gdb", "tcp::1234"

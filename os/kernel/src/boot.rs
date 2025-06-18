@@ -10,7 +10,8 @@
 
 use crate::device::pit::Timer;
 use crate::device::ps2::Keyboard;
-use crate::device::qemu_cfg;
+use crate::device::virtio::gpu;
+use crate::device::{qemu_cfg};
 use crate::device::serial::SerialPort;
 use crate::interrupt::interrupt_dispatcher;
 use crate::memory::nvmem::Nfit;
@@ -60,6 +61,11 @@ use x86_64::structures::paging::frame::PhysFrameRange;
 use x86_64::structures::paging::page::PageRange;
 use x86_64::structures::paging::{Page, PageTable, PageTableFlags, PhysFrame};
 use x86_64::{PhysAddr, VirtAddr};
+use graphic::color;
+use graphic::color::Color;
+use graphic::lfb::LFB;
+use crate::syscall::sys_concurrent::sys_thread_sleep;
+use crate::syscall::sys_time::sys_get_system_time;
 
 // import labels from linker script 'link.ld'
 unsafe extern "C" {
@@ -146,6 +152,9 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
         memory::vmm::VmaType::DeviceMemory,
         "framebuffer",
     );
+
+
+
 
     // Initialize terminal kernel thread and enable terminal logging
     init_terminal(
@@ -258,6 +267,144 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
 
     // Initialize network stack
     network::init();
+
+    // Rectangle Demo with old LFB. This is for the evaluation and comparison of the lfb with the new Virtio GPU driver.
+    /*let mut lfb = LFB::new(
+        fb_info.address() as *mut u8,
+        fb_info.pitch(),
+        fb_info.width(),
+        fb_info.height(),
+        fb_info.bpp(),
+    );
+
+    // Constants
+    const RECT_W: u32 = 50;
+    const RECT_H: u32 = 30;
+    const NUM_RECTS: usize = 500;
+    let screen_width: u32 = fb_info.width();
+    let screen_height: u32 = fb_info.height();
+    let frame_time_ms = 16.67;
+    let delta_time = frame_time_ms / 1000.0;
+
+    // Base color palette (20 entries)
+    let base_colors: [Color; 20] = [
+        Color { red: 255, green: 0, blue: 0, alpha: 255 },
+        Color { red: 0, green: 255, blue: 0, alpha: 255 },
+        Color { red: 0, green: 0, blue: 255, alpha: 255 },
+        Color { red: 255, green: 255, blue: 0, alpha: 255 },
+        Color { red: 255, green: 0, blue: 255, alpha: 255 },
+        Color { red: 0, green: 255, blue: 255, alpha: 255 },
+        Color { red: 255, green: 165, blue: 0, alpha: 255 },
+        Color { red: 128, green: 0, blue: 128, alpha: 255 },
+        Color { red: 255, green: 192, blue: 203, alpha: 255 },
+        Color { red: 0, green: 128, blue: 128, alpha: 255 },
+        Color { red: 0, green: 0, blue: 128, alpha: 255 },
+        Color { red: 128, green: 0, blue: 0, alpha: 255 },
+        Color { red: 128, green: 128, blue: 0, alpha: 255 },
+        Color { red: 192, green: 192, blue: 192, alpha: 255 },
+        Color { red: 128, green: 128, blue: 128, alpha: 255 },
+        Color { red: 165, green: 42, blue: 42, alpha: 255 },
+        Color { red: 255, green: 215, blue: 0, alpha: 255 },
+        Color { red: 250, green: 128, blue: 114, alpha: 255 },
+        Color { red: 64, green: 224, blue: 208, alpha: 255 },
+        Color { red: 238, green: 130, blue: 238, alpha: 255 },
+    ];
+
+    // Expand to 1000 by repeating
+    let mut colors: [Color; NUM_RECTS] = [Color { red: 0, green: 0, blue: 0, alpha: 255 }; NUM_RECTS];
+    for i in 0..NUM_RECTS {
+        colors[i] = base_colors[i % base_colors.len()];
+    }
+
+    // Rectangle state
+    let mut x = [0f32; NUM_RECTS];
+    let mut y = [0f32; NUM_RECTS];
+    let mut vx = [0f32; NUM_RECTS];
+    let mut vy = [0f32; NUM_RECTS];
+
+    for i in 0..NUM_RECTS {
+        x[i] = ((i * 37) as u32 % (screen_width - RECT_W)) as f32;
+        y[i] = ((i * 53) as u32 % (screen_height - RECT_H)) as f32;
+        let base_vx = ((i % 5) as f32 + 1.0) * 100.0;
+        let base_vy = (((i / 5) as f32 + 1.0) * 120.0).min(400.0);
+        vx[i] = if i % 2 == 0 { base_vx } else { -base_vx };
+        vy[i] = if i % 3 == 0 { base_vy } else { -base_vy };
+    }
+
+    // Frame timing and performance measurement
+    const MAX_SAMPLES: usize = 1000;
+    let mut frame_times_ms: [isize; MAX_SAMPLES] = [0; MAX_SAMPLES];
+    let mut sample_index = 0;
+    let mut samples_collected: usize = 0;
+    let mut last_log_time = sys_get_system_time();
+
+    loop {
+        let frame_start = sys_get_system_time();
+
+        lfb.clear_screen();
+        let render_start = sys_get_system_time();
+
+        for i in 0..NUM_RECTS {
+            x[i] += vx[i] * delta_time;
+            y[i] += vy[i] * delta_time;
+
+            if x[i] <= 0.0 {
+                x[i] = 0.0;
+                vx[i] = vx[i].abs();
+            } else if x[i] + RECT_W as f32 >= screen_width as f32 {
+                x[i] = (screen_width - RECT_W) as f32;
+                vx[i] = -vx[i].abs();
+            }
+
+            if y[i] <= 0.0 {
+                y[i] = 0.0;
+                vy[i] = vy[i].abs();
+            } else if y[i] + RECT_H as f32 >= screen_height as f32 {
+                y[i] = (screen_height - RECT_H) as f32;
+                vy[i] = -vy[i].abs();
+            }
+
+            lfb.fill_rect(x[i] as u32, y[i] as u32, RECT_W, RECT_H, colors[i]);
+        }
+
+        let render_end = sys_get_system_time();
+        let render_time = render_end - render_start;
+
+        // Store in ring buffer
+        frame_times_ms[sample_index] = render_time;
+        sample_index = (sample_index + 1) % MAX_SAMPLES;
+        samples_collected = samples_collected.saturating_add(1).min(MAX_SAMPLES);
+
+        // Periodic logging
+        let now = sys_get_system_time();
+        if now - last_log_time >= 30_000 {
+            let mut sorted = frame_times_ms[..samples_collected].to_vec();
+            sorted.sort_unstable();
+
+            let avg_render_time = sorted.iter().sum::<isize>() as f64 / samples_collected as f64;
+            let fps = 1000.0 / avg_render_time;
+            let min_render = *sorted.first().unwrap_or(&0);
+            let max_render = *sorted.last().unwrap_or(&0);
+            let p95_render = sorted[(samples_collected * 95 / 100).min(samples_collected - 1)];
+
+            info!(
+            "[Perf] FPS: {:.2}, ⌀: {:.2} ms, min: {} ms, max: {} ms, 95%: {} ms",
+            fps, avg_render_time, min_render, max_render, p95_render
+        );
+
+            last_log_time = now;
+        }
+
+        let frame_end = sys_get_system_time();
+        let elapsed = frame_end - frame_start;
+        if elapsed < frame_time_ms as isize {
+            sys_thread_sleep((frame_time_ms as isize - elapsed) as usize);
+        }
+    }*/
+
+
+    // Initialize virtio-gpu device
+    gpu::init();
 
     let drive = storage::block_device("ata0").unwrap();
     let mut buffer = [0; 8192];

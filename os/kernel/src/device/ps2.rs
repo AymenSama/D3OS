@@ -37,6 +37,13 @@ impl Keyboard {
         interrupt_dispatcher().assign(InterruptVector::Keyboard, Box::new(KeyboardInterruptHandler::new(Arc::clone(&keyboard))));
         apic().allow(InterruptVector::Keyboard);
     }
+
+    pub fn try_read_byte(&self) -> Option<u8> {
+        match self.buffer.0.try_dequeue() {
+            Ok(code) => Some(code),
+            Err(_) => None,
+        }
+    }
 }
 
 impl InputStream for Keyboard {
@@ -49,6 +56,8 @@ impl InputStream for Keyboard {
             }
         }
     }
+    
+    
 }
 
 impl KeyboardInterruptHandler {
