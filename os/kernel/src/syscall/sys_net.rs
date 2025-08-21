@@ -68,7 +68,7 @@ pub unsafe fn sys_sock_accept(
     if matches!(protocol, SocketType::Tcp) {
         info!("accepting connections on {handle:?}");
         match accept_tcp(handle) {
-            Ok(endpoint) => {
+            Ok((endpoint, listen_handle)) => {
                 let addr_str = CString::new(
                     endpoint.addr.to_string().as_bytes()
                 ).unwrap();
@@ -76,7 +76,11 @@ pub unsafe fn sys_sock_accept(
                 unsafe { addr_buf.copy_from_nonoverlapping(
                     addr_bytes.as_ptr(), addr_bytes.len(),
                 ) };
-                endpoint.port.try_into().unwrap()
+                let mut result: isize = endpoint.port.try_into().unwrap();
+                result |= isize::try_from(unsafe {
+                    core::mem::transmute::<SocketHandle, usize>(listen_handle)
+                }).unwrap().checked_shl(16).unwrap();
+                result
             },
             Err(e) => panic!("failed to accept: {e:?}"),
         }
@@ -233,8 +237,7 @@ pub unsafe fn sys_sock_receive(
     }
 }
 
-pub extern "sysv64" fn sys_sock_close(handle: *const SocketHandle) -> isize {
-    let handle = unsafe { *handle };
+pub extern "sysv64" fn sys_sock_close(handle: SocketHandle) -> isize {
     info!("closing {handle} socket");
     close_socket(handle);
     0
