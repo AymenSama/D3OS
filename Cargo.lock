@@ -302,21 +302,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "doom"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "concurrent",
- "graphic",
- "libc 0.1.0",
- "pc-keyboard",
- "runtime",
- "spin 0.10.0",
- "terminal",
- "time",
-]
-
-[[package]]
 name = "drawer"
 version = "0.1.0"
 dependencies = [
@@ -343,6 +328,17 @@ name = "embedded-io"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
+
+[[package]]
+name = "enumn"
+version = "0.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f9ed6b3789237c8a0c1c505af1c7eb2c560df6186f01b098c3a1064ea532f38"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.115",
+]
 
 [[package]]
 name = "equivalent"
@@ -531,6 +527,22 @@ version = "0.1.0"
 dependencies = [
  "libc 0.1.0",
  "runtime",
+]
+
+[[package]]
+name = "httparse"
+version = "1.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
+
+[[package]]
+name = "httpd"
+version = "0.1.0"
+dependencies = [
+ "httparse",
+ "network",
+ "runtime",
+ "terminal",
 ]
 
 [[package]]
@@ -748,6 +760,7 @@ dependencies = [
  "thingbuf",
  "uefi",
  "uefi-raw 0.10.0",
+ "virtio-drivers",
  "x2apic",
  "x86_64 0.15.4",
 ]
@@ -870,6 +883,17 @@ version = "0.1.0"
 dependencies = [
  "log",
  "syscall",
+]
+
+[[package]]
+name = "logtest"
+version = "0.1.0"
+dependencies = [
+ "concurrent",
+ "log",
+ "logger",
+ "runtime",
+ "terminal",
 ]
 
 [[package]]
@@ -1369,6 +1393,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
+name = "safe-mmio"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0a69f884a1511aa811aa94e04559414a66b18ca63f50f84ca31e304f38bad0d"
+dependencies = [
+ "zerocopy",
+]
+
+[[package]]
 name = "scoped-tls"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1477,6 +1510,15 @@ name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
+
+[[package]]
+name = "shmtest"
+version = "0.1.0"
+dependencies = [
+ "concurrent",
+ "runtime",
+ "terminal",
+]
 
 [[package]]
 name = "smallmap"
@@ -1939,6 +1981,20 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "virtio-drivers"
+version = "0.12.0"
+source = "git+https://github.com/hhu-bsinfo/virtio-drivers.git?rev=f127bb0e9f3d71142ed1354e88c76b419261f8f3#f127bb0e9f3d71142ed1354e88c76b419261f8f3"
+dependencies = [
+ "bitflags 2.10.0",
+ "embedded-io 0.6.1",
+ "enumn",
+ "log",
+ "safe-mmio",
+ "thiserror",
+ "zerocopy",
+]
 
 [[package]]
 name = "volatile"

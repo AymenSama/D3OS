@@ -162,5 +162,10 @@ pub const APPLICATION_REGISTRY: &'static [Application] = &[
             ("-n", &["100M"]),
             ("-b", &["10M"]),
         ],
-    }
+    },
+    Application {
+        namespace: "httpd",
+        single_value: &[],
+        key_value_pair: &[],
+    },
 ];

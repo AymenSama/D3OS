@@ -26,6 +26,7 @@ members = [
     "os/application/netperf",
     "os/application/shmtest",
     "os/application/logtest",
+    "os/application/httpd",
 ]
 
 # [profile.release]
