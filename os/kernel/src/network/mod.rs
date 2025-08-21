@@ -341,6 +341,16 @@ pub fn send_datagram(handle: SocketHandle, destination: IpAddress, port: u16, da
 }
 
 pub fn send_tcp(handle: SocketHandle, data: &[u8]) -> Result<usize, tcp::SendError> {
+    loop {
+        // this extra block is needed so that we don't block all sockets
+        {
+            get_socket_for_current_process!(socket, handle, tcp::Socket);
+            if socket.can_send() {
+                break;
+            }
+        }
+        scheduler().sleep(100);
+    }
     get_socket_for_current_process!(socket, handle, tcp::Socket);
     socket.send_slice(data)
 }
@@ -356,6 +366,16 @@ pub fn receive_datagram(handle: SocketHandle, data: &mut [u8]) -> Result<(usize,
 }
 
 pub fn receive_tcp(handle: SocketHandle, data: &mut [u8]) -> Result<usize, tcp::RecvError> {
+    loop {
+        // this extra block is needed so that we don't block all sockets
+        {
+            get_socket_for_current_process!(socket, handle, tcp::Socket);
+            if socket.can_recv() {
+                break;
+            }
+        }
+        scheduler().sleep(100);
+    }
     get_socket_for_current_process!(socket, handle, tcp::Socket);
     socket.recv_slice(data)
 }
