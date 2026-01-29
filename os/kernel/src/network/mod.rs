@@ -13,10 +13,12 @@ use crate::device::rtl8139::Rtl8139;
 use crate::{pci_bus, scheduler, timer};
 use crate::process::thread::Thread;
 
+
 static RTL8139: Once<Arc<Rtl8139>> = Once::new();
 
 static INTERFACES: RwLock<Vec<Interface>> = RwLock::new(Vec::new());
 static SOCKETS: Once<RwLock<SocketSet>> = Once::new();
+
 
 pub enum SocketType {
     Udp

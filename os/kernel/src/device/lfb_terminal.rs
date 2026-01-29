@@ -166,8 +166,23 @@ impl OutputStream for LFBTerminal {
 
 impl InputStream for LFBTerminal {
     fn read_byte(&self) -> i16 {
+            // if VIRTIO_INPUT_PENDING.load(Ordering::Acquire) {
+            //     if let Some(input_dev_mutex) = virtio_input() {
+            //         if let Some(mut input_dev) = input_dev_mutex.try_lock() {
+            //             let mut event_processed = false;
+            //             while let Some(event) = input_dev.pop_pending_event(){
+            //                 event_processed = true;
+            //                 if event.event_type == 1 && event.value == 1 {
+            //                     info!("VirtIO Input Event (from Terminal): type={}, code={}, value={}", event.event_type, event.code, event.value);
+            //                 }
+            //             }
+            //         }
+            //     }
+            // }
+
         if let Some(keyboard) = keyboard() {
             let read_byte;
+
 
             loop {
                 let mut decoder = self.decoder.lock();
@@ -209,6 +224,7 @@ impl Terminal for LFBTerminal {
 }
 
 impl LFBTerminal {
+
     pub fn new(buffer: *mut u8, pitch: u32, width: u32, height: u32, bpp: u8) -> Self {
         Self {
             display: Mutex::new(DisplayState::new(buffer, pitch, width, height, bpp)),
@@ -354,6 +370,7 @@ impl LFBTerminal {
 
         LFBTerminal::draw_status_bar(display);
         display.lfb.flush();
+        
     }
 
     fn position(display: &mut DisplayState, cursor: &mut CursorState, color: &mut ColorState, pos: (u16, u16)) {
@@ -397,6 +414,7 @@ impl LFBTerminal {
 
         LFBTerminal::draw_status_bar(display);
         display.lfb.flush();
+         
     }
 
     fn clear_screen_to_cursor(display: &mut DisplayState, cursor: &mut CursorState, color: &mut ColorState) {
@@ -420,6 +438,7 @@ impl LFBTerminal {
 
         LFBTerminal::draw_status_bar(display);
         display.lfb.flush();
+        
     }
 
     fn clear_screen_from_cursor(display: &mut DisplayState, cursor: &mut CursorState, color: &mut ColorState) {
@@ -442,6 +461,7 @@ impl LFBTerminal {
 
         LFBTerminal::draw_status_bar(display);
         display.lfb.flush();
+        
     }
 
     fn clear_line(display: &mut DisplayState, cursor: &mut CursorState, color: &mut ColorState) {
@@ -463,6 +483,7 @@ impl LFBTerminal {
             LFBTerminal::draw_status_bar(display);
         }
         display.lfb.flush();
+        
     }
 
     fn clear_line_to_cursor(display: &mut DisplayState, cursor: &mut CursorState, color: &mut ColorState) {
@@ -485,6 +506,7 @@ impl LFBTerminal {
             LFBTerminal::draw_status_bar(display);
         }
         display.lfb.flush();
+        
     }
 
     fn clear_line_from_cursor(display: &mut DisplayState, cursor: &mut CursorState, color: &mut ColorState) {
@@ -507,6 +529,7 @@ impl LFBTerminal {
             LFBTerminal::draw_status_bar(display);
         }
         display.lfb.flush();
+        
     }
 
     fn handle_ansi_color(color: &mut ColorState, params: &Params) {

@@ -75,13 +75,13 @@ pub unsafe fn insert(mut region: PhysFrameRange) {
 }
 
 /// Allocate `frame_count` contiguous page frames.
-pub(super) fn alloc(frame_count: usize) -> PhysFrameRange {
+pub fn alloc(frame_count: usize) -> PhysFrameRange {
     PAGE_FRAME_ALLOCATOR.lock().alloc_block(frame_count)
 }
 
 /// Free a contiguous range of page `frames`.
 /// Unsafe because invalid parameters may break the list allocator.
-pub(super) unsafe fn free(frames: PhysFrameRange) {
+pub unsafe fn free(frames: PhysFrameRange) {
     unsafe {
         PAGE_FRAME_ALLOCATOR.lock().free_block(frames);
     }

@@ -2,7 +2,7 @@ use stream::{InputStream, OutputStream};
 use core::fmt::Write;
 use core::ops::Deref;
 use core::{fmt, ptr};
-use crate::terminal;
+use crate::terminal; 
 
 pub trait Terminal: OutputStream + InputStream {
     fn clear(&self);

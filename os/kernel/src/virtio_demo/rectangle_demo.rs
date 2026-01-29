@@ -14,12 +14,20 @@
 use alloc::vec::Vec;
 use core::slice;
 use log::info;
-use crate::device::virtio::gpu::gpu::VirtioGpu;
-use crate::device::virtio::gpu::renderer::Graphics;
+use crate::virtio_demo::renderer::Graphics;
 use crate::syscall::sys_concurrent::sys_thread_sleep;
 use crate::syscall::sys_time::sys_get_system_time;
 
-/// Represents a colored rectangle that moves and bounces around the screen.
+use crate::hal::HalImpl;
+use virtio::transport::pci::PciTransport;
+use virtio::device::gpu::VirtIOGpu;
+
+use spin::Mutex;
+use x86_64::instructions::interrupts;
+
+use core::sync::atomic::Ordering;
+use crate::GPU_CONFIG_PENDING;
+
 struct MovingRect {
     /// X coordinate of the top-left corner (floating point for smooth movement).
     x: f32,
@@ -38,91 +46,53 @@ struct MovingRect {
 }
 
 /// Starts the rectangle animation demo on the Virtio GPU framebuffer.
-///
-/// Initializes 20 rectangles with different colors, positions, and velocities,
-/// then enters a loop to update their positions, handle bouncing, and redraw.
-///
-/// # Parameters
-/// - `gpu`: Reference to the initialized VirtioGpu instance.
-pub fn rectangle_demo(gpu: &VirtioGpu) {
-    // Retrieve resolution and framebuffer pointer from the GPU.
-    let (fb_ptr, fb_len, screen_width, screen_height) = {
-        let (w, h) = gpu.get_resolution().unwrap();
-        let buf = gpu.initialize_framebuffer().unwrap();
+pub fn rectangle_demo(gpu_mutex: &Mutex<VirtIOGpu<HalImpl, PciTransport>>) {
+    
+    // 1. Initial Setup: Retrieve resolution and framebuffer pointer safely.
+    // We make these variables mutable so we can update them on resize events.
+    let (mut fb_ptr, mut fb_len, mut screen_width, mut screen_height) = interrupts::without_interrupts(|| {
+        let mut gpu = gpu_mutex.lock();
+        let (w, h) = gpu.resolution().unwrap();
+        let buf = gpu.setup_framebuffer().unwrap();
         (buf.as_mut_ptr(), buf.len(), w as usize, h as usize)
-    };
-    let stride = screen_width * 4;
+    });
 
-    // Safety: Interpret the framebuffer pointer as a mutable slice of RGBA bytes.
-    let fb_slice = unsafe { slice::from_raw_parts_mut(fb_ptr, fb_len) };
-    let mut gfx = Graphics::new(fb_slice, screen_width, screen_height, stride);
 
-    // Rectangle dimensions (all rectangles share the same size).
+    // Rectangle dimensions
     const RECT_W: usize = 50;
     const RECT_H: usize = 30;
 
     // Predefined array of 20 distinct RGBA colors.
     let colors: [[u8; 4]; 20] = [
-        [255,   0,   0, 255], // Red
-        [  0, 255,   0, 255], // Green
-        [  0,   0, 255, 255], // Blue
-        [255, 255,   0, 255], // Yellow
-        [255,   0, 255, 255], // Magenta
-        [  0, 255, 255, 255], // Cyan
-        [255, 165,   0, 255], // Orange
-        [128,   0, 128, 255], // Purple
-        [255, 192, 203, 255], // Pink
-        [  0, 128, 128, 255], // Teal
-        [  0,   0, 128, 255], // Navy
-        [128,   0,   0, 255], // Maroon
-        [128, 128,   0, 255], // Olive
-        [192, 192, 192, 255], // Silver
-        [128, 128, 128, 255], // Gray
-        [165,  42,  42, 255], // Brown
-        [255, 215,   0, 255], // Gold
-        [250, 128, 114, 255], // Salmon
-        [ 64, 224, 208, 255], // Turquoise
-        [238, 130, 238, 255], // Violet
+        [255,   0,   0, 255], [  0, 255,   0, 255], [  0,   0, 255, 255], [255, 255,   0, 255],
+        [255,   0, 255, 255], [  0, 255, 255, 255], [255, 165,   0, 255], [128,   0, 128, 255],
+        [255, 192, 203, 255], [  0, 128, 128, 255], [  0,   0, 128, 255], [128,   0,   0, 255],
+        [128, 128,   0, 255], [192, 192, 192, 255], [128, 128, 128, 255], [165,  42,  42, 255],
+        [255, 215,   0, 255], [250, 128, 114, 255], [ 64, 224, 208, 255], [238, 130, 238, 255],
     ];
 
-    // Create a vector of 100 MovingRect instances with varied positions and velocities.
+    // Create a vector of MovingRect instances
     let mut rects: Vec<MovingRect> = {
         let mut vec = Vec::with_capacity(500);
         for i in 0..500 {
-            // Initial position: distribute by index using modulo arithmetic.
             let px = ((i * 37) % (screen_width - RECT_W)) as f32;
             let py = ((i * 53) % (screen_height - RECT_H)) as f32;
-
-            // Base velocities scale with index for variation; doubled for faster motion.
             let base_vx = ((i % 5) as f32 + 1.0) * 100.0;
             let base_vy = (((i / 5) as f32 + 1.0) * 120.0).min(400.0);
-
-            // Alternate direction horizontally and vertically based on index.
             let vx = if i % 2 == 0 { base_vx } else { -base_vx };
             let vy = if i % 3 == 0 { base_vy } else { -base_vy };
-
-            // Use color cyclically from the predefined color list.
             let color = colors[i % colors.len()];
 
-            vec.push(MovingRect {
-                x: px,
-                y: py,
-                width: RECT_W,
-                height: RECT_H,
-                vx,
-                vy,
-                color,
-            });
+            vec.push(MovingRect { x: px, y: py, width: RECT_W, height: RECT_H, vx, vy, color });
         }
         vec
     };
-
 
     // Frame timing config for ~60 FPS
     let frame_time_ms = 16.67;
     let delta_time = frame_time_ms / 1000.0;
 
-    // Scientific FPS tracking
+    // Performance tracking
     const MAX_SAMPLES: usize = 1000;
     let mut frame_times_ms: [isize; MAX_SAMPLES] = [0; MAX_SAMPLES];
     let mut sample_index = 0;
@@ -130,21 +100,54 @@ pub fn rectangle_demo(gpu: &VirtioGpu) {
     let mut last_log_time = sys_get_system_time();
 
     loop {
+        // Handle Resizing
+        if GPU_CONFIG_PENDING.swap(false, Ordering::Acquire) {
+            info!("Resize event detected! Updating framebuffer...");
+            
+            // Re-acquire hardware resources safely
+            interrupts::without_interrupts(|| {
+                let mut gpu = gpu_mutex.lock();
+                
+                // Get new resolution
+                let (w, h) = gpu.resolution().unwrap(); 
+                screen_width = w as usize;
+                screen_height = h as usize;
+                
+                
+                // Get new framebuffer pointer (may change after resize)
+                let buf = gpu.setup_framebuffer().unwrap(); 
+                fb_ptr = buf.as_mut_ptr(); 
+                fb_len = buf.len();
+         
+            });
+            info!("New resolution: {}x{}", screen_width, screen_height);
+        }
+
+        // Create Graphics wrapper for the current frame
+        // We do this every loop iteration because 'fb_ptr' might have changed.
+        // This is cheap as it creates a temporary slice wrapper.
+        let stride = screen_width * 4;
+        let fb_slice = unsafe { slice::from_raw_parts_mut(fb_ptr, fb_len) };
+        let mut gfx = Graphics::new(fb_slice, screen_width, screen_height, stride);
+
+
         let frame_start = sys_get_system_time();
 
-        // Clear screen to black before redrawing
+        // Clear screen
         gfx.clear_screen([0, 0, 0, 255]);
 
-        // Update each rectangle’s position and bounce off screen edges
+        // Update rectangles
         for rect in rects.iter_mut() {
             rect.x += rect.vx * delta_time;
             rect.y += rect.vy * delta_time;
 
+            // Bounce logic
+            // Note: If window shrank, rect might be outside. This logic automatically pushes it back in.
             if rect.x <= 0.0 {
                 rect.x = 0.0;
                 rect.vx = rect.vx.abs();
             } else if rect.x + rect.width as f32 >= screen_width as f32 {
-                rect.x = (screen_width - rect.width) as f32;
+                rect.x = (screen_width.saturating_sub(rect.width)) as f32; // Safe sub
                 rect.vx = -rect.vx.abs();
             }
 
@@ -152,23 +155,28 @@ pub fn rectangle_demo(gpu: &VirtioGpu) {
                 rect.y = 0.0;
                 rect.vy = rect.vy.abs();
             } else if rect.y + rect.height as f32 >= screen_height as f32 {
-                rect.y = (screen_height - rect.height) as f32;
+                rect.y = (screen_height.saturating_sub(rect.height)) as f32; // Safe sub
                 rect.vy = -rect.vy.abs();
             }
 
-            // Draw the updated rectangle
-            gfx.fill_rect(
-                rect.x as usize,
-                rect.y as usize,
-                rect.width,
-                rect.height,
-                rect.color,
-            );
+            gfx.fill_rect(rect.x as usize, rect.y as usize, rect.width, rect.height, rect.color);
         }
 
-        // Push framebuffer to display
         let render_start = sys_get_system_time();
-        gpu.flush_framebuffer().unwrap();
+
+        // {
+        //     let mut gpu = gpu_mutex.lock();
+        //     gpu.flush().expect("GPU flush failed");
+        // }
+
+        // Flush to GPU (Protected against interrupt storms)
+        {
+            interrupts::without_interrupts(|| {
+                let mut gpu = gpu_mutex.lock();
+                gpu.flush().expect("GPU flush failed");
+            });
+        }
+
         let render_end = sys_get_system_time();
         let render_time = render_end - render_start;
 

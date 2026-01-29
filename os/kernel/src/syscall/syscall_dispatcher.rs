@@ -26,6 +26,7 @@ use crate::{core_local_storage, tss};
 use log::info;
 use x86_64::registers::rflags::RFlags;
 
+
 pub const CORE_LOCAL_STORAGE_TSS_RSP0_PTR_INDEX: u64 = 0x00;
 pub const CORE_LOCAL_STORAGE_USER_RSP_INDEX: u64 = 0x08;
 
@@ -116,7 +117,7 @@ impl SyscallTable {
                 sys_touch as *const _,
                 sys_readdir as *const _,
                 sys_cwd as *const _,
-                sys_cd as *const _,                
+                sys_cd as *const _,
             ],
         }
     }

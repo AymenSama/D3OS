@@ -13,11 +13,17 @@
 */
 use core::slice;
 use log::info;
-use crate::device::virtio::gpu::gpu::VirtioGpu;
-use crate::device::virtio::gpu::renderer::Graphics;
+use crate::virtio_demo::renderer::Graphics;
 use crate::syscall::sys_concurrent::sys_thread_sleep;
 use crate::keyboard;
 use crate::syscall::sys_time::sys_get_system_time;
+
+use crate::hal::HalImpl;
+use virtio::transport::pci::PciTransport;
+use virtio::device::gpu::VirtIOGpu;
+
+use spin::Mutex;
+use x86_64::instructions::interrupts;
 
 /// Player paddle state.
 pub struct Paddle {
@@ -211,13 +217,14 @@ fn draw_digit(gfx: &mut Graphics, digit: usize, x: usize, y: usize) {
 }
 
 /// Entry point for the Pong demo. Blocks indefinitely running the game loop.
-pub fn pong_demo(gpu: &VirtioGpu) {
+pub fn pong_demo(gpu_mutex: &Mutex<VirtIOGpu<HalImpl, PciTransport>>) {
     // Initialize framebuffer and resolution
     let (fb_ptr, fb_len, width, height) = {
-        let (w, h) = gpu.get_resolution().unwrap();
-        let buf = gpu.initialize_framebuffer().unwrap();
+        let mut gpu = gpu_mutex.lock();
+        let (w, h) = gpu.resolution().unwrap();
+        let buf = gpu.setup_framebuffer().unwrap();
         (buf.as_mut_ptr(), buf.len(), w as usize, h as usize)
-    };
+    }; // Lock fällt hier
     let stride = width * 4; // 4 bytes per pixel (RGBA)
     let fb_slice = unsafe { slice::from_raw_parts_mut(fb_ptr, fb_len) };
     let mut gfx_fb = Graphics::new(fb_slice, width, height, stride);
@@ -244,6 +251,7 @@ pub fn pong_demo(gpu: &VirtioGpu) {
     let mut total_render_time_ms = 0isize;
     let mut last_log_time = sys_get_system_time();
 
+
     loop {
         let frame_start = sys_get_system_time();
 
@@ -254,7 +262,13 @@ pub fn pong_demo(gpu: &VirtioGpu) {
         // Rendering phase
         let render_start = sys_get_system_time();
         render_game(&mut gfx_fb, &paddle1, &paddle2, &ball, score1, score2);
-        gpu.flush_framebuffer().unwrap();
+
+        {
+            interrupts::without_interrupts(|| {
+                let mut gpu = gpu_mutex.lock();
+                gpu.flush().expect("GPU flush failed");
+            });
+        }
         let render_end = sys_get_system_time();
 
         // Stats update

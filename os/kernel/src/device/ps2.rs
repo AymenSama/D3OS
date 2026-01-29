@@ -28,6 +28,7 @@ struct KeyboardInterruptHandler {
     keyboard: Arc<Keyboard>,
 }
 
+
 impl Keyboard {
     fn new(controller: Arc<Mutex<Controller>>, buffer_cap: usize) -> Self {
         Self { controller, buffer: mpmc::bounded::scq::queue(buffer_cap) }
@@ -36,6 +37,12 @@ impl Keyboard {
     pub fn plugin(keyboard: Arc<Keyboard>) {
         interrupt_dispatcher().assign(InterruptVector::Keyboard, Box::new(KeyboardInterruptHandler::new(Arc::clone(&keyboard))));
         apic().allow(InterruptVector::Keyboard);
+    }
+    pub fn try_read_byte(&self) -> Option<u8> {
+        match self.buffer.0.try_dequeue() {
+            Ok(code) => Some(code),
+            Err(_) => None,
+        }
     }
 }
 
