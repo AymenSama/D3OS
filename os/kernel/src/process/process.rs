@@ -55,7 +55,6 @@ impl Process {
             .for_each(|&thread_id| scheduler().kill(thread_id));
     }
 
-
     pub fn dump(&self) {
         self.virtual_address_space.dump(self.id);
     }

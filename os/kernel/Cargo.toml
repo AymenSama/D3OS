@@ -18,7 +18,6 @@ naming = { path = "../library/naming" }
 
 # External depencies
 spin = "0.9.8"
-tock-registers = "0.7.0"
 x86_64 = "0.15.2"
 linked_list_allocator = { version = "0.10.5", features = ["alloc_ref"] }
 multiboot2 = "0.23.1"
@@ -41,7 +40,6 @@ bitflags = "2.9.0"
 smoltcp = { version = "0.12.0", default-features = false, features = ["alloc", "log", "medium-ethernet", "proto-ipv4", "socket-udp"] }
 mbrs = { version = "0.3.1", default-features = false, features = ["no-std"] }
 num_enum = { version = "0.7.3", default-features = false }
-bytemuck = { version = "1.14", features = ["derive"] }
 
 [build-dependencies]
 built = { version = "0.7.7", features = ["chrono", "git2"] }

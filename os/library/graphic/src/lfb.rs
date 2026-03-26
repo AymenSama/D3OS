@@ -1,5 +1,4 @@
 use unifont::get_glyph;
-use crate::color;
 use crate::color::Color;
 
 pub struct LFB {
@@ -93,24 +92,13 @@ impl LFB {
             }
         }
     }
-    
-    pub fn clear_screen(&self) {
-        let end_x = 0 + self.width;
-        let end_y = 0 + self.height;
-
-        for i in 0..end_y {
-            for j in 0..end_x {
-                self.draw_pixel(j, i, color::BLACK);
-            }
-        }
-    }
 
     pub fn draw_char(&self, x: u32, y: u32, fg_color: Color, bg_color: Color, c: char) -> u32 {
         self.draw_char_scaled(x, y, 1, 1, fg_color, bg_color, c)
     }
 
     pub fn draw_char_scaled(&self, x: u32, y: u32, x_scale: u32, y_scale: u32, fg_color: Color, bg_color: Color, c: char) -> u32 {
-        return match get_glyph(c) {
+        match get_glyph(c) {
             Some(glyph) => {
                 let mut x_offset = 0;
                 let mut y_offset = 0;
