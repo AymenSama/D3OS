@@ -51,15 +51,6 @@ use x86_64::structures::paging::PhysFrame;
 use x86_64::structures::paging::frame::PhysFrameRange;
 use x86_64::structures::tss::TaskStateSegment;
 
-use virtio::device::rng::VirtIORng;
-use virtio::device::gpu::VirtIOGpu;
-use virtio::device::input::VirtIOInput;
-use virtio::device::sound::VirtIOSound;
-use virtio::device::socket::VirtIOSocket;
-use virtio::transport::pci::PciTransport;
-use crate::hal::HalImpl;
-use core::sync::atomic::{AtomicBool};
-
 
 extern crate alloc;
 
@@ -75,10 +66,6 @@ pub mod network;
 pub mod process;
 pub mod storage;
 pub mod syscall;
-pub mod dma;
-pub mod hal;
-pub mod virtio_demo;
-        //pub crash; //gibt es nicht - erzeugt crash - gpu.rs wird neu compiliert
 
 pub mod built_info {
     // The file has been placed there by the build script.
@@ -113,40 +100,6 @@ fn panic(info: &PanicInfo) -> ! {
 
 /// CPU caps.
 static CPU: Once<Cpu> = Once::new();
-
-/// neu
-static VIRTIO_RNG: Once<Mutex<VirtIORng<HalImpl, PciTransport>>> = Once::new();
-
-static VIRTIO_GPU: Once<Mutex<VirtIOGpu<HalImpl, PciTransport>>> = Once::new(); //Arc hinzufügen? Mutex pflicht
-pub static GPU_QUEUE_PENDING:  AtomicBool = AtomicBool::new(false);
-pub static GPU_CONFIG_PENDING: AtomicBool = AtomicBool::new(false);
-
-static VIRTIO_INPUT: Once<Mutex<VirtIOInput<HalImpl, PciTransport>>> = Once::new();
-pub static VIRTIO_INPUT_PENDING: AtomicBool = AtomicBool::new(false);
-
-static VIRTIO_SOCKET: Once<Mutex<VirtIOSocket<HalImpl, PciTransport>>> = Once::new();
-
-static VIRTIO_SOUND: Once<Mutex<VirtIOSound<HalImpl, PciTransport>>> = Once::new();
-
-pub fn virtio_rng() -> Option<&'static Mutex<VirtIORng<HalImpl, PciTransport>>> {
-    VIRTIO_RNG.get()
-}
-
-pub fn virtio_input() -> Option<&'static Mutex<VirtIOInput<HalImpl, PciTransport>>> {
-    VIRTIO_INPUT.get()
-}
-
-pub fn virtio_gpu() -> Option<&'static Mutex<VirtIOGpu<HalImpl, PciTransport>>> {
-    VIRTIO_GPU.get()
-}
-
-pub fn virtio_socket() -> Option<&'static Mutex<VirtIOSocket<HalImpl, PciTransport>>> {
-    VIRTIO_SOCKET.get()
-}
-
-pub fn virtio_sound() -> Option<&'static Mutex<VirtIOSound<HalImpl, PciTransport>>> {
-    VIRTIO_SOUND.get()
-}
 
 pub fn init_cpu_info() {
     CPU.call_once(|| {

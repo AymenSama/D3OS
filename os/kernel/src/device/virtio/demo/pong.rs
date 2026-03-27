@@ -1,5 +1,5 @@
 /* ╔═════════════════════════════════════════════════════════════════════════╗
-   ║ Module: pong_demo.rs                                                    ║
+   ║ Module: pong.rs                                                    ║
    ╟─────────────────────────────────────────────────────────────────────────╢
    ║ Interactive Pong demo rendered on the Virtio GPU framebuffer.           ║
    ║                                                                         ║
@@ -13,12 +13,12 @@
 */
 use core::slice;
 use log::info;
-use crate::virtio_demo::renderer::Graphics;
+use super::renderer::Graphics;
 use crate::syscall::sys_concurrent::sys_thread_sleep;
 use crate::keyboard;
 use crate::syscall::sys_time::sys_get_system_time;
 
-use crate::hal::HalImpl;
+use super::super::hal::HalImpl;
 use virtio::transport::pci::PciTransport;
 use virtio::device::gpu::VirtIOGpu;
 

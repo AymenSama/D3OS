@@ -1,4 +1,4 @@
-use crate::dma::Dma;
+use super::dma::Dma;
 use core::ptr::NonNull;
 use virtio::{BufferDirection, Hal, PhysAddr};
 use x86_64::structures::paging::PhysFrame;

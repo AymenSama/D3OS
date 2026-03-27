@@ -1,7 +1,5 @@
-// kernel/src/interrupt/virtio_handler.rs
-
 use crate::interrupt::interrupt_handler::InterruptHandler;
-use crate::{virtio_gpu, GPU_QUEUE_PENDING, GPU_CONFIG_PENDING, virtio_input, VIRTIO_INPUT_PENDING, virtio_rng, virtio_sound};
+use super::{virtio_gpu, GPU_QUEUE_PENDING, GPU_CONFIG_PENDING, virtio_input, VIRTIO_INPUT_PENDING, virtio_rng, virtio_sound};
 use log::{debug};
 use virtio::transport::InterruptStatus;
 use core::sync::atomic::Ordering;

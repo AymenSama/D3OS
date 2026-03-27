@@ -1,10 +1,8 @@
 use log::{info, error, warn};
-use crate::virtio_rng;
-use crate::virtio_gpu;
+use super::super::{virtio_gpu, virtio_rng};
+use virtio::device::sound::{PcmFormat, PcmRate, PcmFeatures};
 
 pub fn play_pcm_file() {
-    use virtio::device::sound::{PcmFormat, PcmRate, PcmFeatures, NotificationType};
-    use log::{info, warn, error};
 
     // 1) PCM-Daten einbetten (Datei liegt neben virtio_tests.rs)
     const PCM_BYTES: &[u8] = include_bytes!("test_song.pcm");
@@ -15,7 +13,7 @@ pub fn play_pcm_file() {
     let mut target_ch    = 2u8;
 
     // Device-Infos abfragen
-    let (sound_mutex, stream_id, rates_ok, fmts_ok, ch_range_ok) = match crate::virtio_sound() {
+    let (sound_mutex, stream_id, rates_ok, fmts_ok, ch_range_ok) = match super::super::virtio_sound() {
         Some(m) => {
             // nur zum Abfragen kurz locken
             let mut dev = m.lock();

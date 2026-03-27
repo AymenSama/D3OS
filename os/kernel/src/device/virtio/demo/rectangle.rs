@@ -1,5 +1,5 @@
 /* ╔═════════════════════════════════════════════════════════════════════════╗
-   ║ Module: rectangle_demo.rs                                               ║
+   ║ Module: rectangle.rs                                               ║
    ╟─────────────────────────────────────────────────────────────────────────╢
    ║ Animated rectangle demo rendered on the Virtio GPU framebuffer.         ║
    ║                                                                         ║
@@ -14,11 +14,11 @@
 use alloc::vec::Vec;
 use core::slice;
 use log::info;
-use crate::virtio_demo::renderer::Graphics;
+use super::renderer::Graphics;
 use crate::syscall::sys_concurrent::sys_thread_sleep;
 use crate::syscall::sys_time::sys_get_system_time;
 
-use crate::hal::HalImpl;
+use super::super::hal::HalImpl;
 use virtio::transport::pci::PciTransport;
 use virtio::device::gpu::VirtIOGpu;
 
@@ -26,7 +26,7 @@ use spin::Mutex;
 use x86_64::instructions::interrupts;
 
 use core::sync::atomic::Ordering;
-use crate::GPU_CONFIG_PENDING;
+use super::super::GPU_CONFIG_PENDING;
 
 struct MovingRect {
     /// X coordinate of the top-left corner (floating point for smooth movement).
