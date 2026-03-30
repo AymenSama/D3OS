@@ -11,6 +11,7 @@ TOWBOOT_URL = "https://github.com/hhuOS/towboot/releases/download/v${TOWBOOT_VER
 TAR = { source = "${CARGO_MAKE_RUST_TARGET_OS}", default_value = "tar", mapping = { "macos" = "gtar" } }
 LINKER = { source = "${CARGO_MAKE_RUST_TARGET_OS}", default_value = "ld", mapping = { "macos" = "x86_64-elf-ld" } }
 QEMU_AUDIO_DEVICE = { source = "${CARGO_MAKE_RUST_TARGET_OS}", default_value = "pa", mapping = { "macos" = "coreaudio" } }
+QEMU_DISPLAY = { source = "${CARGO_MAKE_RUST_TARGET_OS}", default_value = "gtk", mapping = { "macos" = "cocoa" } }
 
 #VIRGL_DEBUG = "all"
 #GALLIUM_DEBUG = "trace"
@@ -26,8 +27,7 @@ command = "qemu-system-x86_64"
 dependencies = [ "image", "hdd", "ovmf" ]
 args = [
     # Base machine configuration
-    #"-enable-kvm",
-    "-machine", "q35,nvdimm=on",
+    "-machine", "q35,nvdimm=on,pcspk-audiodev=audio0",
     "-m", "256M,slots=2,maxmem=1G",
     "-cpu", "qemu64",
     "-bios", "RELEASEX64_OVMF.fd",
@@ -54,18 +54,14 @@ args = [
     "-nic", "model=rtl8139,id=rtl8139,hostfwd=udp::1797-:1797",
     "-object", "filter-dump,id=filter1,netdev=rtl8139,file=rtl8139.dump",
 
-    # VirtIO GPU
-    "-display", "gtk,gl=on",
-    "-device", "virtio-vga-gl",
-    #"-device", "virtio-gpu-pci",
-    #"-device", "virtio-vga", #gleich mit -pci
-
     # VirtIO Devices
+    "-display", "${QEMU_DISPLAY},gl=on",
+    "-device", "virtio-vga-gl", # virtio-gpu-pci, virtio-vga
     "-device", "virtio-rng-pci",
     #"-device", "virtio-keyboard-pci",
     #"-device", "virtio-mouse-pci",
     #"-device", "vhost-vsock-pci,guest-cid=3",
-    "-device", "virtio-sound-pci,audiodev=audio0",
+    #"-device", "virtio-sound-pci,audiodev=audio0",
 
     # Audio configuration (Using pulse audio for Linux)
     "-audiodev", "id=audio0,driver=${QEMU_AUDIO_DEVICE}",
@@ -76,7 +72,7 @@ command = "qemu-system-x86_64"
 dependencies = [ "debug-signal-vscode" ]
 args = [
     # Base machine configuration
-    "-machine", "q35,nvdimm=on",
+    "-machine", "q35,nvdimm=on,pcspk-audiodev=audio0",
     "-m", "256M,slots=2,maxmem=1G",
     "-cpu", "qemu64",
     "-bios", "RELEASEX64_OVMF.fd",
@@ -101,8 +97,14 @@ args = [
     "-nic", "model=rtl8139,id=rtl8139,hostfwd=udp::1797-:1797",
     "-object", "filter-dump,id=filter1,netdev=rtl8139,file=rtl8139.dump",
 
-    "-device", "virtio-gpu-pci",
+    # VirtIO Devices
+    "-display", "${QEMU_DISPLAY},gl=on",
+    "-device", "virtio-vga-gl", # virtio-gpu-pci, virtio-vga
     "-device", "virtio-rng-pci",
+    #"-device", "virtio-keyboard-pci",
+    #"-device", "virtio-mouse-pci",
+    #"-device", "vhost-vsock-pci,guest-cid=3",
+    #"-device", "virtio-sound-pci,audiodev=audio0",
 
     # Audio configuration (Using pulse audio for Linux)
     "-audiodev", "id=audio0,driver=${QEMU_AUDIO_DEVICE}",
