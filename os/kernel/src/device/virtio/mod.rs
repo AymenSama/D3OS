@@ -118,6 +118,10 @@ pub fn init_devices(fb_start_phys_addr: u64, fb_end_phys_addr: u64) {
                 }
 
                 // Kein Overlap - normal identitätsmappen
+                if address == 0 {
+                    warn!("      Not mapping BAR{} at {:#x} (size: {:#x})", bar_index, address, size);
+                    continue;
+                }
                 info!("      Mapping BAR{} at {:#x} (size: {:#x})", bar_index, address, size);
                 let kernel_process = process_manager().read().kernel_process().unwrap();
                 kernel_process.virtual_address_space.kernel_map_devm_identity(
