@@ -56,6 +56,7 @@ use x86_64::structures::paging::PhysFrame;
 use x86_64::structures::paging::frame::PhysFrameRange;
 use x86_64::structures::tss::TaskStateSegment;
 
+
 extern crate alloc;
 extern crate llfree;
 
@@ -131,7 +132,6 @@ fn panic(info: &PanicInfo) -> ! {
 
 /// CPU caps.
 static CPU: Once<Cpu> = Once::new();
-
 
 pub fn init_cpu_info() {
     CPU.call_once(|| {

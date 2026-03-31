@@ -11,6 +11,7 @@
 use crate::consts;
 use crate::device::pit::Timer;
 use crate::device::ps2::{Keyboard, Mouse};
+use crate::device::{qemu_cfg, virtio};
 use crate::device::serial::SerialPort;
 use crate::interrupt::interrupt_dispatcher;
 use crate::memory::nvmem::Nfit;
@@ -300,6 +301,8 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     // Scan PCI bus
     info!("Scanning PCI bus");
     init_pci();
+
+    virtio::init_devices(fb_start_phys_addr, fb_end_phys_addr); // Framebuffer Start und Endadresse von Multiboot-LFB
 
     // Initialize storage devices
     storage::init();

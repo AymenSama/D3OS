@@ -18,6 +18,7 @@ use crate::process::process::Process;
 use crate::{pci_bus, process_manager, scheduler, timer};
 use crate::process::thread::Thread;
 
+
 static RTL8139: Once<Arc<Rtl8139>> = Once::new();
 
 static INTERFACES: RwLock<Vec<Interface>> = RwLock::new(Vec::new());
