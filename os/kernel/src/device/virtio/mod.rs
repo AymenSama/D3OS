@@ -9,8 +9,10 @@ use x86_64::{PhysAddr, structures::paging::PageTableFlags};
 use crate::{apic, interrupt::interrupt_dispatcher::InterruptVector, interrupt_dispatcher, memory::{PAGE_SIZE, vma::VmaType}, pci_bus, process_manager};
 use interrupt::VirtioInterruptHandler;
 use hal::HalImpl;
+#[cfg(feature = "virtio_tests")]
 use demo::{pong::pong_demo, rectangle::rectangle_demo, virtio_tests};
 
+#[cfg(feature = "virtio_tests")]
 mod demo;
 mod dma;
 mod hal;
@@ -217,6 +219,7 @@ pub fn init_devices(fb_start_phys_addr: u64, fb_end_phys_addr: u64) {
     }
 }
 
+#[cfg(feature = "virtio_tests")]
 pub fn run_tests() {
     virtio_tests::test_rng();
     virtio_tests::play_pcm_file();

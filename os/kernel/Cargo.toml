@@ -12,6 +12,9 @@ test = false
 doctest = false
 bench = false
 
+[features]
+virtio_tests = []
+
 [dependencies]
 # Local dependencies
 graphic = { path = "../library/graphic" }
