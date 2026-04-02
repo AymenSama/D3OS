@@ -157,11 +157,14 @@ impl TcpListener {
         Ok(Self { handle, address })
     }
 
-    pub fn accept(&self) -> Result<TcpStream, NetworkError> {
+    /// Accept a new connection on this socket.
+    /// 
+    /// To allow further connections, a new listening socket is created.
+    pub fn accept(&mut self) -> Result<TcpStream, NetworkError> {
         let protocol = 1;
         // this should be the maximum length for an IP address
         let mut addr_buf = [0u8; 40];
-        let remote_port: u16 = syscall(SystemCall::SockAccept, &[
+        let listen_port = syscall(SystemCall::SockAccept, &[
             self.handle,
             protocol,
             addr_buf.as_mut_ptr() as usize,
@@ -170,20 +173,25 @@ impl TcpListener {
                 Errno::EEXIST => panic!("socket as already been opened"),
                 Errno::EINVAL => NetworkError::InvalidAddress,
                 errno => NetworkError::Unknown(errno),
-            })?
-            .try_into().unwrap();
+            })?;
+        let old_handle = self.handle;
+        self.handle = listen_port >> 16;
+        let remote_port = listen_port as u16;
         let addr_str = CStr::from_bytes_until_nul(&addr_buf).unwrap().to_str().unwrap();
         let remote_addr = SocketAddr::new(
             IpAddr::from_str(addr_str).expect(&format!("failed to parse '{addr_str}'")),
             remote_port,
         );
-        Ok(TcpStream { handle: self.handle, local_address: self.address, peer_address: remote_addr })
+        Ok(TcpStream { handle: old_handle, local_address: self.address, peer_address: remote_addr })
     }
 }
 
 impl Drop for TcpListener {
     fn drop(&mut self) {
-        // TODO: just drop this when all connections are gone
+        let protocol = 1;
+        // the handle here only refers to the new, not yet connected socket
+        syscall(SystemCall::SockClose, &[self.handle, protocol])
+            .expect("failed to close socket");
     }
 }
 
@@ -300,7 +308,7 @@ impl TcpStream {
 impl Drop for TcpStream {
     fn drop(&mut self) {
         let protocol = 1;
-        syscall(SystemCall::SockClose, &[ptr::from_ref(&self.handle) as usize, protocol])
+        syscall(SystemCall::SockClose, &[self.handle as usize, protocol])
             .expect("failed to close socket");
     }
 }
