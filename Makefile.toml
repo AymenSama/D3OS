@@ -11,7 +11,8 @@ TOWBOOT_URL = "https://github.com/hhuOS/towboot/releases/download/v${TOWBOOT_VER
 TAR = { source = "${CARGO_MAKE_RUST_TARGET_OS}", default_value = "tar", mapping = { "macos" = "gtar" } }
 LINKER = { source = "${CARGO_MAKE_RUST_TARGET_OS}", default_value = "ld", mapping = { "macos" = "x86_64-elf-ld" } }
 QEMU_AUDIO_DEVICE = { source = "${CARGO_MAKE_RUST_TARGET_OS}", default_value = "pa", mapping = { "macos" = "coreaudio" } }
-QEMU_DISPLAY = { source = "${CARGO_MAKE_RUST_TARGET_OS}", default_value = "gtk", mapping = { "macos" = "cocoa" } }
+QEMU_DISPLAY = { source = "${CARGO_MAKE_RUST_TARGET_OS}", default_value = "gtk,gl=on", mapping = { "macos" = "cocoa" } }
+QEMU_VIRTIO_DEVICE = { source = "${CARGO_MAKE_RUST_TARGET_OS}", default_value = "virtio-vga-gl", mapping = { "macos" = "virtio-vga" } }
 
 #VIRGL_DEBUG = "all"
 #GALLIUM_DEBUG = "trace"
@@ -55,8 +56,8 @@ args = [
     "-object", "filter-dump,id=filter1,netdev=rtl8139,file=rtl8139.dump",
 
     # VirtIO Devices
-    "-display", "${QEMU_DISPLAY},gl=on",
-    "-device", "virtio-vga-gl", # virtio-gpu-pci, virtio-vga
+    "-display", "${QEMU_DISPLAY}",
+    "-device", "${QEMU_VIRTIO_DEVICE}", # virtio-gpu-pci, virtio-vga
     "-device", "virtio-rng-pci",
     #"-device", "virtio-keyboard-pci",
     #"-device", "virtio-mouse-pci",
