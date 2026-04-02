@@ -32,6 +32,10 @@ use x86_64::structures::paging::{PhysFrame, Size4KiB};
 use crate::memory::PAGE_SIZE;
 use crate::memory::dram;
 
+/// Initialize the new page frame allocator and remove reserved regions 
+pub fn init() {
+    
+}
 
 /// Return the total number of free frames currently available in the allocator.
 pub fn get_total_free_frames() -> usize {
@@ -66,7 +70,7 @@ pub(super) fn frame_from_u64(
 
 /// Insert an available memory `region` obtained during the boot process.
 pub unsafe fn boot_avail(mut region: PhysFrameRange) {
-    dram::available(region);
+    dram::insert_available(region);
 
     PHYS_LIMIT.call_once(|| {
         Mutex::new(Cell::new(
@@ -97,7 +101,7 @@ pub unsafe fn boot_avail(mut region: PhysFrameRange) {
 
 /// Permanently reserve a range of page `frames` during boot time
 pub unsafe fn boot_reserve(frames: PhysFrameRange) {
-    dram::reserved(frames); 
+    dram::insert_reserved(frames); 
     unsafe {
         PAGE_FRAME_ALLOCATOR.lock().reserve_block(frames);
     }

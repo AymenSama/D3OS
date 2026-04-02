@@ -96,61 +96,72 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
         Cr4::update(|flags| flags.insert(Cr4Flags::FSGSBASE));
     }
 
-    // The bootloader marks the kernel image region as available, so we need to reserve it manually
-    let kernel_image_region = kernel_image_region();
+
+
+    // and initialize kernel heap, after which formatted strings may be used in logs and panics.
+    info!("Initializing kernel heap");
+    let heap_region = unsafe { memory::vmm::alloc_frames(consts::KERNEL_HEAP_PAGES) };
+    dram::boot_alloc(consts::KERNEL_HEAP_PAGES).expect("Failed to allocate kernel heap frames!");
+//    let heap_region = dram::boot_alloc(consts::KERNEL_HEAP_PAGES).expect("Failed to allocate kernel heap frames!");
+    dram::insert_reserved(heap_region);
     unsafe {
-        memory::frames::boot_reserve(kernel_image_region);
+        allocator().init(&heap_region);
     }
-    // also reserve frames for initrd
+    info!("Kernel heap region:  [{:#x} - {:#x}], #frames: [{}]", 
+        heap_region.start.start_address().as_u64(), 
+        heap_region.end.start_address().as_u64(),
+        consts::KERNEL_HEAP_PAGES,
+    );
+
+    // The bootloader marks the kernel image region as available, so we need to mark it manually as reserved
+    let kernel_image_region = kernel_image_region();
+    unsafe { memory::frames::boot_reserve(kernel_image_region); }
+    dram::insert_reserved(kernel_image_region);
+    info!("kernel image region: [{:#x} - {:#x}], #frames: [{}]", 
+        kernel_image_region.start.start_address().as_u64(), 
+        kernel_image_region.end.start_address().as_u64(),
+        kernel_image_region.len()
+    );
+
+    // also mark the  memory region for 'initrd' as reserved
     let initrd_tag = multiboot
         .module_tags()
         .find(|module| module.cmdline().is_ok_and(|name| name == "initrd"))
         .expect("Initrd not found!");
     let initrd_region = get_initrd_frames(initrd_tag);
-    unsafe {
-        memory::frames::boot_reserve(initrd_region);
-    }
-    // and the multiboot information
-    let multiboot_region = get_multiboot_frames(&multiboot);
-    unsafe {
-        memory::frames::boot_reserve(multiboot_region);
-    }
-
-    // and initialize kernel heap, after which formatted strings may be used in logs and panics.
-    info!("Initializing kernel heap");
-    let heap_region = unsafe { memory::vmm::alloc_frames(consts::KERNEL_HEAP_PAGES) };
-    unsafe {
-        allocator().init(&heap_region);
-    }
-    info!("kernel image region: [Start: {:#x}, End: {:#x}]", 
-        kernel_image_region.start.start_address().as_u64(), 
-        kernel_image_region.end.start_address().as_u64(),
-    );
+    unsafe { memory::frames::boot_reserve(initrd_region); }
+    dram::insert_reserved(initrd_region);
     info!(
-        "Initrd region: [Start: {:#x}, End: {:#x}]",
+        "Initrd region:       [{:#x} - {:#x}], #frames: [{}]",
         initrd_region.start.start_address().as_u64(),
         initrd_region.end.start_address().as_u64(),
+        initrd_region.len()
     );
+
+    // and finally the same for the multiboot region
+    let multiboot_region = get_multiboot_frames(&multiboot);
+    unsafe { memory::frames::boot_reserve(multiboot_region); }
+    dram::insert_reserved(multiboot_region);
     info!(
-        "Multiboot region: [Start: {:#x}, End: {:#x}]",
+        "Multiboot region:    [{:#x} - {:#x}], #frames: [{}]",
         multiboot_region.start.start_address().as_u64(),
         multiboot_region.end.start_address().as_u64(),
+        multiboot_region.len()
     );
-    trace!("{multiboot:?}");
 
-    // Allocate frames for the kernel heap using the new way
-    dram::alloc(consts::KERNEL_HEAP_PAGES as u64).expect("Failed to allocate kernel heap frames!");
-    dram::dump();
-    debug!("Old page frame allocator:\n{}", memory::frames::dump());
-
-    /*
-        Hier den neuen Frame-Allocator aktivieren + Device Memory separat verwalten
-     */
-
-    // Merge reserved and free regions
+    // Remove all reserved regions from the free regions in 'dram'
     dram::finalize();
+
+    // Dump information about available and reserved memory regions
     dram::dump();
+
+    // Initialize the page frame allocator
+    memory::frames::init();
+    memory::frames::dump();
+
     debug!("Old page frame allocator:\n{}", memory::frames::dump());
+
+
 
     // Initialize total free frames count in frame allocator
     vmm::init_total_free_frames();
