@@ -96,13 +96,9 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
         Cr4::update(|flags| flags.insert(Cr4Flags::FSGSBASE));
     }
 
-
-
     // and initialize kernel heap, after which formatted strings may be used in logs and panics.
     info!("Initializing kernel heap");
-    let heap_region = unsafe { memory::vmm::alloc_frames(consts::KERNEL_HEAP_PAGES) };
-    dram::boot_alloc(consts::KERNEL_HEAP_PAGES).expect("Failed to allocate kernel heap frames!");
-//    let heap_region = dram::boot_alloc(consts::KERNEL_HEAP_PAGES).expect("Failed to allocate kernel heap frames!");
+    let heap_region = dram::boot_alloc(consts::KERNEL_HEAP_PAGES).expect("Failed to allocate kernel heap frames!");
     dram::insert_reserved(heap_region);
     unsafe {
         allocator().init(&heap_region);
@@ -115,7 +111,6 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
 
     // The bootloader marks the kernel image region as available, so we need to mark it manually as reserved
     let kernel_image_region = kernel_image_region();
-    unsafe { memory::frames::boot_reserve(kernel_image_region); }
     dram::insert_reserved(kernel_image_region);
     info!("kernel image region: [{:#x} - {:#x}], #frames: [{}]", 
         kernel_image_region.start.start_address().as_u64(), 
@@ -129,7 +124,6 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
         .find(|module| module.cmdline().is_ok_and(|name| name == "initrd"))
         .expect("Initrd not found!");
     let initrd_region = get_initrd_frames(initrd_tag);
-    unsafe { memory::frames::boot_reserve(initrd_region); }
     dram::insert_reserved(initrd_region);
     info!(
         "Initrd region:       [{:#x} - {:#x}], #frames: [{}]",
@@ -140,7 +134,6 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
 
     // and finally the same for the multiboot region
     let multiboot_region = get_multiboot_frames(&multiboot);
-    unsafe { memory::frames::boot_reserve(multiboot_region); }
     dram::insert_reserved(multiboot_region);
     info!(
         "Multiboot region:    [{:#x} - {:#x}], #frames: [{}]",
@@ -160,15 +153,7 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     memory::frames::dump();
 
     debug!("Old page frame allocator:\n{}", memory::frames::dump());
-
-
-
-    // Initialize total free frames count in frame allocator
-    vmm::init_total_free_frames();
-    info!("Total free frames #{}, memory::frames::get_total_free_frames()", memory::frames::get_total_free_frames());
-    info!("Total free frames #{}, vmm::get_free_frames()", vmm::get_free_frames());
-
-    
+   
     // Initialize CPU information
     init_cpu_info();
 
@@ -500,7 +485,7 @@ fn scan_multiboot2_memory_map(memory_map: &MemoryMapTag) {
         .iter()
         .filter(|area| area.typ() == MemoryAreaType::Available)
         .for_each(|area| unsafe {
-            memory::frames::boot_avail(PhysFrameRange {
+            dram::insert_available(PhysFrameRange {
                 start: PhysFrame::from_start_address(PhysAddr::new(area.start_address()).align_up(PAGE_SIZE as u64)).unwrap(),
                 end: PhysFrame::from_start_address(PhysAddr::new(area.end_address()).align_down(PAGE_SIZE as u64)).unwrap(),
             });
@@ -534,9 +519,7 @@ fn scan_efi_multiboot2_memory_map(memory_map: &EFIMemoryMapTag) {
                 unprotect_frames(frames);
             }
 
-            unsafe {
-                memory::frames::boot_avail(frames);
-            }
+            dram::insert_available(frames);
         });
 }
 
@@ -565,9 +548,7 @@ fn scan_efi_memory_map(memory_map: &dyn MemoryMap) {
                 unprotect_frames(frames);
             }
 
-            unsafe {
-                memory::frames::boot_avail(frames);
-            }
+            dram::insert_available(frames);
         });
 }
 

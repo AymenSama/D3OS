@@ -36,7 +36,7 @@
    ║   - pfr_from_pr_identity      get pfr range from page range identity    ║
    ╟─────────────────────────────────────────────────────────────────────────╢
    ║ Author: Fabian Ruhland and Michael Schoettner                           ║
-   ║         Univ. Duesseldorf, 8.3.2026                                     ║
+   ║         Univ. Duesseldorf, 2.4.2026                                     ║
    ╚═════════════════════════════════════════════════════════════════════════╝
 */
 
@@ -56,8 +56,8 @@ use x86_64::structures::paging::page::PageRange;
 use x86_64::structures::paging::{Page, PageTableFlags};
 
 use crate::cpu;
+use crate::memory::dram;
 use crate::memory::frames;
-use crate::memory::frames::phys_limit;
 use crate::memory::pages;
 use crate::memory::pages::Paging;
 use crate::memory::vma::{VirtualMemoryArea, VmaType};
@@ -72,10 +72,10 @@ pub fn clone_address_space(other: &VirtualAddressSpace) -> Arc<Paging> {
 pub fn create_kernel_address_space() -> Arc<Paging> {
     let address_space = Paging::new(4);
     // map all physical addresses 1:1
-    let max_phys_addr = phys_limit().start_address();
+    let max_phys_addr = dram::limit();
     let range = PageRange {
         start: Page::containing_address(VirtAddr::zero()),
-        end: Page::containing_address(VirtAddr::new(max_phys_addr.as_u64())),
+        end: Page::containing_address(VirtAddr::new(max_phys_addr)),
     };
 
     address_space.map(range, MemorySpace::Kernel, PageTableFlags::PRESENT | PageTableFlags::WRITABLE);

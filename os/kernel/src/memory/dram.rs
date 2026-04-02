@@ -14,8 +14,9 @@
    ║   - boot_alloc        alloc a region from available (only during boot)  ║
    ║   - dump              dump the collected dram information               ║
    ║   - get_all_reserved  get a ro view into the finalized reserved regions ║
+   ║   - get_all_available get a ro view into the finalized avail. regions   ║
    ╟─────────────────────────────────────────────────────────────────────────╢
-   ║ Author: Michael Schoettner, Univ. Duesseldorf, 01.4.2026                ║
+   ║ Author: Michael Schoettner, Univ. Duesseldorf, 2.4.2026                 ║
    ╚═════════════════════════════════════════════════════════════════════════╝
 */
 use core::sync::atomic::{AtomicU64, AtomicBool, AtomicUsize, Ordering};
@@ -460,13 +461,13 @@ pub fn dump() {
 }
 
 
-/// Read-only view into the finalized reserved regions
-/// Used to initialize the page frame allocator with the collected reserved regions 
-pub struct ReservedRegionsGuard<'a> {
+/// Read-only view into the finalized region
+/// Used to initialize the page frame allocator with the collected  regions 
+pub struct RegionsGuard<'a> {
     guard: MutexGuard<'a, RegionSet>,
 }
 
-impl<'a> ReservedRegionsGuard<'a> {
+impl<'a> RegionsGuard<'a> {
     /// Number of regions
     pub fn count(&self) -> usize {
         self.guard.count
@@ -494,12 +495,23 @@ impl<'a> ReservedRegionsGuard<'a> {
 
 
 /// Get a read-only view into the finalized reserved regions
-pub fn get_all_reserved<'a>() -> ReservedRegionsGuard<'a> {
+pub fn get_all_reserved<'a>() -> RegionsGuard<'a> {
     if !DRAM_FINALIZED.load(Ordering::Acquire) {
         panic!("available: DRAM not finalized yet");
     }
 
-    ReservedRegionsGuard {
+    RegionsGuard {
         guard: RESERVED_REGIONS.lock(),
+    }
+}
+
+/// Get a read-only view into the finalized available regions
+pub fn get_all_available<'a>() -> RegionsGuard<'a> {
+    if !DRAM_FINALIZED.load(Ordering::Acquire) {
+        panic!("available: DRAM not finalized yet");
+    }
+
+    RegionsGuard {
+        guard: AVAILABLE_REGIONS.lock(),
     }
 }
