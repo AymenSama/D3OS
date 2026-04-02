@@ -120,8 +120,13 @@ fn handle(request: Request, webroot: &str) -> Response {
                 r.headers.insert("Content-Type".into(), match infer::get(&r.body) {
                     Some(t) => t.mime_type(),
                     None => {
-                        println!("failed to get mime type for {}, treating it as text", request_path);
-                        "text/plain; charset=UTF-8"
+                        println!("failed to get mime type for {}, trying to figure it out from the extension", request_path);
+                        match request_path.rsplit_once(".") {
+                            Some((_, "html")) => "text/html",
+                            Some((_, "css")) => "text/css",
+                            Some((_, "js")) => "application/javascript",
+                            _ => "text/plain; charset=UTF-8",
+                        }
                     },
                 }.into());
                 return r;
