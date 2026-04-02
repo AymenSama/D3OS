@@ -17,7 +17,8 @@ use x86_64::structures::paging::{frame::PhysFrameRange};
 use alloc::{collections::BTreeMap, string::{String}};
 use alloc::sync::Arc;
 use spin::{Once, RwLock};
-use crate::{consts::MAX_SHM_SIZE, memory::{MemorySpace, PAGE_SIZE, vma::VmaType, vmm}, process_manager};
+use crate::memory;
+use crate::{consts::MAX_SHM_SIZE, memory::{MemorySpace, PAGE_SIZE, vma::VmaType}, process_manager};
 
 struct SharedMemoryEntry {
     size:usize,
@@ -78,7 +79,7 @@ pub fn open(name: String, size:usize, create: bool) -> isize {
 
         // allocate enough frames for size
         let frame_count = (size + PAGE_SIZE - 1) / PAGE_SIZE;
-        let frames = unsafe { vmm::alloc_frames(frame_count) };
+        let frames = memory::alloc_frames(frame_count);
 
         // generate id for shm entry
         let id = table.next_free_id.fetch_add(1, Ordering::SeqCst);
@@ -218,6 +219,6 @@ fn delete(id: usize) {
 
     // free physical frames
     let frames = entry.frames;
-    unsafe { vmm::free_frames(frames) };
+    memory::free_frames(frames);
     //info!("SHM Frames freed");
 }

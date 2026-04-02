@@ -1,4 +1,4 @@
-use crate::memory::vmm;
+use crate::memory;
 
 use super::dma::Dma;
 use core::ptr::NonNull;
@@ -29,7 +29,7 @@ unsafe impl Hal for HalImpl {
             start: start_frame,
             end: start_frame + pages as u64,
         };
-        unsafe { vmm::free_frames(frame_range) };
+        memory::free_frames(frame_range);
         0
     }
 
@@ -57,6 +57,6 @@ impl Drop for Dma {
             start: start_frame,
             end: start_frame + self.pages() as u64,
         };
-        unsafe { vmm::free_frames(frame_range) };
+        memory::free_frames(frame_range);
     }
 }

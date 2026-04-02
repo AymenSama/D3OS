@@ -20,7 +20,8 @@ use core::ptr::NonNull;
 use x86_64::{PhysAddr, VirtAddr};
 use x86_64::structures::paging::{Page, PageTableFlags, page::PageRange};
 
-use crate::memory::{PAGE_SIZE, vmm};
+use crate::memory;
+use crate::memory::PAGE_SIZE;
 use crate::process_manager;
 
 /// A DMA buffer allocated in physical memory and mapped into virtual address space.
@@ -47,7 +48,7 @@ impl Dma {
         assert!(pages > 0, "DMA must allocate at least one page");
 
         // Allocate physical memory frames.
-        let phys_frames = unsafe { vmm::alloc_frames(pages) };
+        let phys_frames = memory::alloc_frames(pages);
         let paddr = phys_frames.start.start_address();
 
         // Define the virtual page range corresponding to the allocated frames.

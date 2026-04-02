@@ -18,12 +18,10 @@
 */
 use alloc::format;
 use alloc::string::String;
-use core::cell::Cell;
 use core::fmt::{Debug, Formatter};
 use core::ptr;
 use log::{info, trace};
 use spin::Mutex;
-use spin::once::Once;
 use x86_64::PhysAddr;
 use x86_64::structures::paging::frame::PhysFrameRange;
 use x86_64::structures::paging::{PhysFrame, Size4KiB};
@@ -32,7 +30,7 @@ use crate::memory::PAGE_SIZE;
 use crate::memory::dram;
 
 /// Initialize the page frame allocator with all available memory regions obtained during the boot process.
-pub fn init() {
+pub(super) fn init() {
     let free = dram::get_all_available();
     for r in free.iter() {
         let start_addr = r.start.as_u64();
@@ -53,7 +51,7 @@ pub fn init() {
 }
 
 /// Return the total number of free frames currently available in the allocator.
-pub fn get_total_free_frames() -> usize {
+pub(super) fn get_total_free_frames() -> usize {
     let mut available: usize = 0;
 
     let mut current = &PAGE_FRAME_ALLOCATOR.lock().head;

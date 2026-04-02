@@ -1,6 +1,6 @@
 use crate::interrupt::interrupt_handler::InterruptHandler;
 use crate::memory::MemorySpace;
-use crate::memory::vmm;
+use crate::memory;
 use crate::memory::vma::VmaType;
 use crate::{apic, idt, interrupt_dispatcher, scheduler};
 use alloc::boxed::Box;
@@ -192,7 +192,7 @@ fn handle_page_fault(frame: InterruptStackFrame, _index: u8, error: Option<u64>)
             .virtual_address_space
             .is_address_within_vma(fault_addr.as_u64(), VmaType::UserStack)
         {
-            if vmm::frame_allocator_locked() {
+            if memory::frame_allocator_locked() {
                 panic!("Page Fault, cannot get lock to frame allocator\nError code: [{:?}]\nAddress: [0x{:0>16x}]", error, fault_addr);
             }
 
@@ -211,7 +211,7 @@ fn handle_page_fault(frame: InterruptStackFrame, _index: u8, error: Option<u64>)
 
         // Check if page fault occurred inside a user heap
         if let Some(heap) = thread.process().virtual_address_space.is_address_within_vma(fault_addr.as_u64(), VmaType::Heap) {
-            if vmm::frame_allocator_locked() {
+            if memory::frame_allocator_locked() {
                 panic!("Page Fault, cannot get lock to frame allocator\nError code: [{:?}]\nAddress: [0x{:0>16x}]", error, fault_addr);
             }
 

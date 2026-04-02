@@ -19,7 +19,7 @@
    ║ Author: Michael Schoettner, Univ. Duesseldorf, 2.4.2026                 ║
    ╚═════════════════════════════════════════════════════════════════════════╝
 */
-use core::sync::atomic::{AtomicU64, AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use log::info;
 use spin::{Mutex,MutexGuard};
 use x86_64::PhysAddr;

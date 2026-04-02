@@ -412,7 +412,7 @@ impl Scheduler {
        
         
         info!("kheap: free bytes    {}", memory::heap::get_free_bytes());
-        info!("frames: free frames #{}", memory::vmm::get_free_frames());
+        info!("frames: free frames #{}", memory::get_free_frames());
 
         drop(current); // Decrease Rc manually, because block() does not return
         self.block_switch(ready_state);

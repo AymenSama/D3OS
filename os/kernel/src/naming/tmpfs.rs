@@ -408,7 +408,7 @@ impl Pipe {
 
 impl PipeObject for Pipe {
     fn open(&self, flags: OpenOptions) -> Result<usize, Errno> {
-        let (pid, tid) = scheduler().current_ids();
+        let (pid, _tid) = scheduler().current_ids();
 
         match flags {
             OpenOptions::READONLY => {
