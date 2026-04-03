@@ -69,13 +69,6 @@ pub(super) fn allocator_locked() -> bool {
     PAGE_FRAME_ALLOCATOR.is_locked()
 }
 
-/// Helper function to convert a u64 address to a PhysFrame.
-/// The given address is aligned up to the page size (4 KiB).
-pub(super) fn frame_from_u64(addr: u64) -> Result<PhysFrame<Size4KiB>, x86_64::structures::paging::page::AddressNotAligned> {
-    let pa = PhysAddr::new(addr).align_up(PAGE_SIZE as u64);
-    PhysFrame::from_start_address(pa)
-}
-
 /// Insert an available memory `region` obtained during the boot process.
 pub fn mark_avail(mut region: PhysFrameRange) {
     // Make sure, the first page is not inserted to avoid null pointer panics
@@ -115,7 +108,7 @@ pub(super) fn remove_dev_mem(addr: u64, frame_count: usize) -> Result<Option<Phy
 */
 /// Free a contiguous range of page `frames`.
 /// Unsafe because invalid parameters may break the list allocator.
-pub(super) unsafe fn free(frames: PhysFrameRange) {
+pub(super) fn free(frames: PhysFrameRange) {
     unsafe {
         PAGE_FRAME_ALLOCATOR.lock().free_block(frames);
     }

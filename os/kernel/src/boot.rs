@@ -70,7 +70,7 @@ const BOOT_TO_GUI: bool = false; // Immediately start the GUI instead of termina
 pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInformationHeader) {
     // Initialize logger
     log::set_logger(logger())
-        .map(|()| log::set_max_level(LevelFilter::Debug))
+        .map(|()| log::set_max_level(LevelFilter::Info))
         .expect("Failed to initialize logger!");
 
     // Log messages and panics are now working, but cannot use format string until the heap is initialized later on
@@ -102,7 +102,7 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     unsafe {
         allocator().init(&heap_region);
     }
-    info!("Kernel heap region:  [{:#x} - {:#x}], #frames: [{}]", 
+    debug!("Kernel heap region:  [{:#x} - {:#x}], #frames: [{}]", 
         heap_region.start.start_address().as_u64(), 
         heap_region.end.start_address().as_u64(),
         consts::KERNEL_HEAP_PAGES,
@@ -111,7 +111,7 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     // The bootloader marks the kernel image region as available, so we need to mark it manually as reserved
     let kernel_image_region = kernel_image_region();
     dram::insert_reserved(kernel_image_region);
-    info!("kernel image region: [{:#x} - {:#x}], #frames: [{}]", 
+    debug!("kernel image region: [{:#x} - {:#x}], #frames: [{}]", 
         kernel_image_region.start.start_address().as_u64(), 
         kernel_image_region.end.start_address().as_u64(),
         kernel_image_region.len()
@@ -124,7 +124,7 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
         .expect("Initrd not found!");
     let initrd_region = get_initrd_frames(initrd_tag);
     dram::insert_reserved(initrd_region);
-    info!(
+    debug!(
         "Initrd region:       [{:#x} - {:#x}], #frames: [{}]",
         initrd_region.start.start_address().as_u64(),
         initrd_region.end.start_address().as_u64(),
@@ -134,7 +134,7 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     // and finally the same for the multiboot region
     let multiboot_region = get_multiboot_frames(&multiboot);
     dram::insert_reserved(multiboot_region);
-    info!(
+    debug!(
         "Multiboot region:    [{:#x} - {:#x}], #frames: [{}]",
         multiboot_region.start.start_address().as_u64(),
         multiboot_region.end.start_address().as_u64(),
@@ -150,9 +150,7 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     // Initialize the page frame allocator
     memory::init();
     memory::dump();
-
-    debug!("Old page frame allocator:\n{}", memory::frames::dump());
-   
+  
     // Initialize CPU information
     init_cpu_info();
 
