@@ -20,7 +20,7 @@
    ╚═════════════════════════════════════════════════════════════════════════╝
 */
 use core::sync::atomic::{AtomicU64, AtomicBool, Ordering};
-use log::{info,debug};
+use log::info;
 use spin::{Mutex,MutexGuard};
 use x86_64::PhysAddr;
 use x86_64::structures::paging::{PhysFrame, frame::PhysFrameRange};
@@ -408,10 +408,10 @@ pub fn boot_alloc(num_frames: usize) -> Option<PhysFrameRange> {
 
 /// Dump the DRAM region state to the log.
 pub fn dump() {
-    debug!("DRAM information");
-    debug!("   limit: {:#x}", DRAM_LIMIT.load(Ordering::SeqCst));
+    info!("DRAM information");
+    info!("   limit: {:#x}", DRAM_LIMIT.load(Ordering::SeqCst));
 
-    debug!("   available frame regions:");
+    info!("   available frame regions:");
     {
         let available = AVAILABLE_REGIONS.lock();
 
@@ -426,7 +426,7 @@ pub fn dump() {
             let end = region.end.as_u64();
             let num_frames = (end - start) / PAGE_SIZE as u64;
 
-            debug!(
+            info!(
                 "      [{:#10x} - {:#10x}), #frames: [{}]",
                 start,
                 end,
@@ -435,7 +435,7 @@ pub fn dump() {
         }
     }
 
-    debug!("   reserved frame regions:");
+    info!("   reserved frame regions:");
     {
         let reserved = RESERVED_REGIONS.lock();
 
@@ -450,7 +450,7 @@ pub fn dump() {
             let end = region.end.as_u64();
             let num_frames = (end - start) / PAGE_SIZE as u64;
 
-            debug!(
+            info!(
                 "      [{:#10x} - {:#10x}), #frames: [{}]",
                 start,
                 end,

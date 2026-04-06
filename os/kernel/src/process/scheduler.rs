@@ -40,9 +40,10 @@ use core::{panic, ptr};
 use smallmap::Map;
 use spin::{Mutex, MutexGuard};
 use syscall::return_vals::Errno;
+use log::info;
 
 use crate::memory;
-use log::info;
+use crate::interrupt::interrupt_dispatcher::last_irq_from_user;
 
 // thread IDs
 static THREAD_ID_COUNTER: AtomicUsize = AtomicUsize::new(1);
@@ -325,6 +326,12 @@ impl Scheduler {
                 Some(thread) => thread,
                 None => return,
             };
+
+            // increment utime if in User-Mode, stime if in Kernel-Mode
+            // only increment if switch is caused by interrupt (ApicTimerInterrupt)
+            if interrupt {
+                current.process().account_tick(last_irq_from_user());
+            }
 
             let current_ptr = ptr::from_ref(current.as_ref());
             let next_ptr = ptr::from_ref(next.as_ref());

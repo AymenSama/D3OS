@@ -145,13 +145,13 @@ impl VirtualAddressSpace {
 
     /// Tries to allocate a frame range for the full `vma`. \
     /// Returns the allocated [`PhysFrameRange`] if successful, otherwise `None`.
-    pub fn alloc_pf_for_vma(&self, vma: &VirtualMemoryArea) -> Option<PhysFrameRange> {
+    pub fn alloc2_pf_for_vma(&self, vma: &VirtualMemoryArea) -> Option<PhysFrameRange> {
         Some(memory::alloc_frames(vma.range.len() as usize))
     }
 
     /// Tries to allocate a frame range for the given `page_range` which must be within the given `vma`. \
     /// Returns the allocated [`PhysFrameRange`] if successful, otherwise `None`.
-    pub fn alloc_pfr_for_partial_vma(&self, vma: &VirtualMemoryArea, page_range: PageRange) -> Option<PhysFrameRange> {
+    pub fn alloc2_pfr_for_partial_vma(&self, vma: &VirtualMemoryArea, page_range: PageRange) -> Option<PhysFrameRange> {
         if page_range.start < vma.range.start || page_range.end > vma.range.end {
             return None;
         }

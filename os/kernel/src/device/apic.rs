@@ -15,6 +15,27 @@ use uefi::boot::PAGE_SIZE;
 use x2apic::ioapic::{IoApic, IrqFlags, IrqMode, RedirectionTableEntry};
 use x2apic::lapic::{LocalApic, LocalApicBuilder, TimerDivide, TimerMode};
 use x86_64::structures::paging::PageTableFlags;
+use core::sync::atomic::{AtomicU64, Ordering};
+
+// monotonic clock, used for /proc/ticks
+static TICK_COUNT: AtomicU64 = AtomicU64::new(0);
+static TICK_INTERVAL_MS: AtomicU64 = AtomicU64::new(0);
+
+pub fn init_tick_clock(interval_ms: usize) {
+    TICK_INTERVAL_MS.store(interval_ms as u64, Ordering::Relaxed);
+}
+
+pub fn on_timer_tick() {
+    TICK_COUNT.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn now_ticks() -> u64 {
+    TICK_COUNT.load(Ordering::Relaxed)
+}
+
+pub fn now_ms() -> u64 {
+    now_ticks() * TICK_INTERVAL_MS.load(Ordering::Relaxed)
+}
 
 pub struct Apic {
     local_apic: Mutex<LocalApic>,
@@ -32,6 +53,7 @@ struct ApicTimerInterruptHandler {}
 
 impl InterruptHandler for ApicTimerInterruptHandler {
     fn trigger(&self) {
+        on_timer_tick(); // increase monotone clock
         scheduler().switch_thread_from_interrupt();
     }
 }
@@ -357,6 +379,8 @@ impl Apic {
             InterruptVector::ApicTimer,
             Box::new(ApicTimerInterruptHandler::default()),
         );
+        // initialisation of monotonic clock
+        init_tick_clock(interval_ms);
     }
 
     fn calibrate_timer(local_apic: &mut LocalApic) -> usize {

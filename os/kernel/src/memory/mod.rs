@@ -44,36 +44,36 @@ pub fn get_free_frames() -> usize {
 
 /// Wrapper function
 pub fn init() {
-    frames_lf::init();
+    frames::init();
 }
 
 /// Wrapper function
 pub fn dump() {
-    frames_lf::dump();
+    frames::dump();
 }
 
 /// Wrapper function
 /// Allocate `frame_count` contiguous page frames.
 pub fn alloc_frames(frame_count: usize) -> PhysFrameRange {
     FREE_FRAMES.fetch_sub(frame_count, Ordering::SeqCst);
-    frames_lf::alloc(frame_count)
+    frames::alloc(frame_count)
 }
 
 /// Wrapper function
 /// Free a contiguous range of page `frames`.
 pub fn free_frames(frames: PhysFrameRange) {
     FREE_FRAMES.fetch_add((frames.end - frames.start) as usize, Ordering::SeqCst);
-    frames_lf::free(frames);
+    frames::free(frames);
 }
 
 /// Wrapper function
 pub fn frame_allocator_locked() -> bool {
-    frames_lf::allocator_locked()
+    frames::allocator_locked()
 }
 
 /// Wrapper function
 pub fn get_total_free_frames() -> usize {
-    frames_lf::get_total_free_frames()
+    frames::get_total_free_frames()
 }
 
 

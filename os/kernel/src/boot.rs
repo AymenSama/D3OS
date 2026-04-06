@@ -102,7 +102,7 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     unsafe {
         allocator().init(&heap_region);
     }
-    debug!("Kernel heap region:  [{:#x} - {:#x}], #frames: [{}]", 
+    info!("Kernel heap region:  [{:#x} - {:#x}], #frames: [{}]", 
         heap_region.start.start_address().as_u64(), 
         heap_region.end.start_address().as_u64(),
         consts::KERNEL_HEAP_PAGES,
@@ -111,7 +111,7 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     // The bootloader marks the kernel image region as available, so we need to mark it manually as reserved
     let kernel_image_region = kernel_image_region();
     dram::insert_reserved(kernel_image_region);
-    debug!("kernel image region: [{:#x} - {:#x}], #frames: [{}]", 
+    info!("kernel image region: [{:#x} - {:#x}], #frames: [{}]", 
         kernel_image_region.start.start_address().as_u64(), 
         kernel_image_region.end.start_address().as_u64(),
         kernel_image_region.len()
@@ -124,7 +124,7 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
         .expect("Initrd not found!");
     let initrd_region = get_initrd_frames(initrd_tag);
     dram::insert_reserved(initrd_region);
-    debug!(
+    info!(
         "Initrd region:       [{:#x} - {:#x}], #frames: [{}]",
         initrd_region.start.start_address().as_u64(),
         initrd_region.end.start_address().as_u64(),
@@ -134,7 +134,7 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     // and finally the same for the multiboot region
     let multiboot_region = get_multiboot_frames(&multiboot);
     dram::insert_reserved(multiboot_region);
-    debug!(
+    info!(
         "Multiboot region:    [{:#x} - {:#x}], #frames: [{}]",
         multiboot_region.start.start_address().as_u64(),
         multiboot_region.end.start_address().as_u64(),

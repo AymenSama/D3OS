@@ -46,7 +46,7 @@ use super::sys_terminal::{
 };
 use super::sys_time::{sys_get_date, sys_get_system_time, sys_set_date};
 use super::sys_vmem::{sys_map_memory, sys_map_frame_buffer};
-use super::sys_shm::{self, sys_shm_attach, sys_shm_detach, sys_shm_open, sys_shm_unlink};
+use super::sys_shm::{sys_shm_attach, sys_shm_detach, sys_shm_open, sys_shm_unlink};
 
 
 pub const CORE_LOCAL_STORAGE_TSS_RSP0_PTR_INDEX: u64 = 0x00;

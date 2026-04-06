@@ -16,6 +16,7 @@ use x86_64::VirtAddr;
 use crate::memory::{vmm, MemorySpace};
 use crate::memory::vma::VmaType;
 use crate::process::process::Process;
+use crate::process::process_stats::ProcStat;
 use crate::scheduler;
 
 pub struct ProcessManager {
@@ -84,6 +85,27 @@ impl ProcessManager {
     /// Return the ids of all active processes
     pub fn active_process_ids(&self) -> Vec<usize> {
         self.active_processes.iter().map(|process| process.id()).collect()
+    }
+
+    /// Return true if the process is active
+    pub fn is_active_process(&self, pid: usize) -> bool {
+        self.active_processes.iter().any(|process| process.id() == pid)
+    }
+
+    /// Return a snapshot of the process
+    pub fn get_stats(&self, pid: usize) -> Option<Arc<ProcStat>> {
+        self.active_processes
+            .iter()
+            .find(|process| process.id() == pid)
+            .map(|process| Arc::new(ProcStat::from_process(process)))
+    }
+
+    /// Return Vec of all Process-Stats
+    pub fn get_all_stats(&self) -> Vec<Arc<ProcStat>> {
+        self.active_processes
+            .iter()
+            .map(|process| Arc::new(ProcStat::from_process(process)))
+            .collect()
     }
 
     /// Get reference to kernel process

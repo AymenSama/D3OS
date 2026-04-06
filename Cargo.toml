@@ -27,6 +27,8 @@ members = [
     "os/application/shmtest",
     "os/application/logtest",
     "os/application/httpd",
+    "os/application/proctest",
+    "os/application/cat",
 ]
 
 # [profile.release]
