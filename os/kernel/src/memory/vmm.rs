@@ -491,7 +491,7 @@ impl VirtualAddressSpace {
                 let remaining_bytes = vma_size - total_bytes_to_copy;
 
                 if remaining_bytes > 0 {
-                    dest.offset(offset as isize).write_bytes(0, remaining_bytes as usize);
+                    dest.offset((offset % PAGE_SIZE as u64) as isize).write_bytes(0, remaining_bytes as usize);
                 }
             }
         }
