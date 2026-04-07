@@ -111,9 +111,9 @@ checksum = "1e4b40c7323adcfc0a41c4b88143ed58346ff65a288fc144329c5c45e05d70c6"
 
 [[package]]
 name = "bitfield-struct"
-version = "0.11.0"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3ca019570363e800b05ad4fd890734f28ac7b72f563ad8a35079efb793616f8"
+checksum = "8769c4854c5ada2852ddf6fd09d15cf43d4c2aaeccb4de6432f5402f08a6003b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -153,6 +153,15 @@ name = "byteorder"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
+
+[[package]]
+name = "cat"
+version = "0.1.0"
+dependencies = [
+ "naming",
+ "runtime",
+ "terminal",
+]
 
 [[package]]
 name = "cc"
@@ -197,6 +206,7 @@ name = "concurrent"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "spin 0.10.0",
  "syscall",
  "time",
 ]
@@ -539,6 +549,7 @@ checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 name = "httpd"
 version = "0.1.0"
 dependencies = [
+ "concurrent",
  "httparse",
  "infer",
  "naming",
@@ -863,8 +874,8 @@ checksum = "6373607a59f0be73a39b6fe456b8192fcc3585f602af20751600e974dd455e77"
 
 [[package]]
 name = "llfree"
-version = "0.1.0"
-source = "git+https://github.com/luhsra/llfree-rs?rev=8d3e2aaff9fbb9cce708cea8fc1a3cb5a20a9471#8d3e2aaff9fbb9cce708cea8fc1a3cb5a20a9471"
+version = "0.2.0"
+source = "git+https://github.com/luhsra/llfree-rs#d9fd8b1f03e3f65fa529de0211b4b371128db0fd"
 dependencies = [
  "bitfield-struct",
  "log",
@@ -1254,6 +1265,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "proctest"
+version = "0.1.0"
+dependencies = [
+ "naming",
+ "runtime",
+ "terminal",
 ]
 
 [[package]]
