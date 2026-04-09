@@ -383,10 +383,12 @@ impl Thread {
             .iter()
             .filter(|header| header.p_type == elf64::program_header::PT_LOAD)
             .try_for_each(|header| {
-                if header.p_vaddr == 0 || header.p_memsz == 0 {
+
+                if header.p_type != elf64::program_header::PT_LOAD || header.p_vaddr == 0 || header.p_memsz == 0 || header.p_filesz > header.p_memsz {
                     warn!("skipping empty ELF section {header:?}");
                     return Ok(());
                 }
+
                 // Calc total number of pages for .text and .bss = 'p_memsz'
                 let total_page_count = header.p_memsz.div_ceil(PAGE_SIZE.try_into().unwrap());
 
@@ -421,7 +423,7 @@ impl Thread {
                     let bss_page_count = total_page_count - code_page_count;
                     let dest_page_start = vma.range.start.start_address().as_u64();
                     let mut dest_offset: u64 = code_page_count as u64 * PAGE_SIZE as u64;
-
+                    
                     // copy remaining pages
                     for _i in 0..bss_page_count {
                         // get destination physical address
