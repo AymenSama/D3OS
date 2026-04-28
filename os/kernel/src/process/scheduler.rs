@@ -33,6 +33,7 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use log::debug;
+use uuid::Uuid;
 use core::fmt::Write;
 use core::sync::atomic::AtomicUsize;
 use core::sync::atomic::Ordering::Relaxed;
@@ -184,7 +185,7 @@ impl Scheduler {
 
 
     /// Return (pid, tid) of current thread
-    pub fn current_ids(&self) -> (usize, usize) {
+    pub fn current_ids(&self) -> (Uuid, usize) {
         let tid = self.current_thread().id();
         let pid = self.current_thread().process().id();
         (pid, tid)
@@ -250,7 +251,7 @@ impl Scheduler {
     /// Prepare to block the calling thread
     /// Used from wait_queue to prepare the thread for blocking and get its (pid, tid) for later `notify_one` and `notify_all` calls
     /// Returns (pid, tid)
-    pub fn park_current(&self) -> (usize, usize) {
+    pub fn park_current(&self) -> (Uuid, usize) {
         let state = self.get_ready_state();
         let thread = Scheduler::current(&state);
         thread.set_state(ThreadState::Parking);
@@ -259,7 +260,7 @@ impl Scheduler {
 
     /// Unblock thread with given (pid, tid). \
     /// Returns true if thread was found and unblocked, false otherwise.
-    pub fn unblock(&self, pid: usize, tid: usize) -> bool {
+    pub fn unblock(&self, pid: Uuid, tid: usize) -> bool {
        // info!("Unblock: Thread with PID={}, TID={}", pid, tid);
 
         // Synchronize against `thread_switch`

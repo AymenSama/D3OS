@@ -1,7 +1,9 @@
+use uuid::Uuid;
+
 use crate::process::process::Process;
 use crate::memory::PAGE_SIZE;
 pub struct ProcStat {
-    pub pid: usize,
+    pub pid: Uuid,
     pub utime: u64, // Time spent in User-Mode
     pub stime: u64, // Time spent in Kernel-Mode
     pub total_cpu_time: u64, // Total Time spent
@@ -19,7 +21,7 @@ impl ProcStat {
         }
     }
 
-    pub fn pid(&self) -> usize {
+    pub fn pid(&self) -> Uuid {
         self.pid
     }
     // Time in User-Mode

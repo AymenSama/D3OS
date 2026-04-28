@@ -9,6 +9,7 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use log::info;
+use uuid::Uuid;
 use x86_64::structures::paging::frame::PhysFrameRange;
 use x86_64::structures::paging::Page;
 use x86_64::VirtAddr;
@@ -49,7 +50,7 @@ impl ProcessManager {
         }
 
         let paging = vmm::create_kernel_address_space();
-        let kernel_process = Arc::new(Process::new(paging));
+        let kernel_process = Arc::new(Process::new_kernel(paging));
         self.active_processes.push(Arc::clone(&kernel_process));
 
         // TODO: adjust this when removing 1:1 mapping
@@ -83,17 +84,17 @@ impl ProcessManager {
     }
 
     /// Return the ids of all active processes
-    pub fn active_process_ids(&self) -> Vec<usize> {
+    pub fn active_process_ids(&self) -> Vec<Uuid> {
         self.active_processes.iter().map(|process| process.id()).collect()
     }
 
     /// Return true if the process is active
-    pub fn is_active_process(&self, pid: usize) -> bool {
+    pub fn is_active_process(&self, pid: Uuid) -> bool {
         self.active_processes.iter().any(|process| process.id() == pid)
     }
 
     /// Return a snapshot of the process
-    pub fn get_stats(&self, pid: usize) -> Option<Arc<ProcStat>> {
+    pub fn get_stats(&self, pid: Uuid) -> Option<Arc<ProcStat>> {
         self.active_processes
             .iter()
             .find(|process| process.id() == pid)
@@ -123,11 +124,11 @@ impl ProcessManager {
     }
 
     /// Exit a process by its id
-    pub fn exit(&mut self, process_id: usize) {
+    pub fn exit(&mut self, process_id: Uuid) {
         let index = self
             .active_processes
             .iter()
-            .position(|process| process.id == process_id)
+            .position(|process| process.id() == process_id)
             .expect("Process: Trying to exit a non-existent process!");
 
         let process = Arc::clone(&self.active_processes[index]);
@@ -138,11 +139,11 @@ impl ProcessManager {
     }
 
     /// Kill a process by its id
-    pub fn kill(&mut self, process_id: usize) {
+    pub fn kill(&mut self, process_id: Uuid) {
         let index = self
             .active_processes
             .iter()
-            .position(|process| process.id == process_id)
+            .position(|process| process.id() == process_id)
             .expect("Process: Trying to kill a non-existent process!");
 
         let process = Arc::clone(&self.active_processes[index]);

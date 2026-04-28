@@ -14,6 +14,7 @@
 
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
+use uuid::Uuid;
 use core::result::Result;
 
 use core::{fmt};
@@ -56,7 +57,7 @@ impl DirectoryObject for ProcDir {
     fn lookup(&self, name: &str) -> Result<NamedObject, Errno> {
         // the current Directory is /proc
         // /proc/<pid>
-        if let Ok(pid) = name.parse::<usize>() {
+        if let Ok(pid) = Uuid::parse_str(name) {
             if process_manager().read().is_active_process(pid) {
                 Ok(NamedObject::DirectoryObject(Arc::new(ProcPidDir { pid })))
             } else {
@@ -142,7 +143,7 @@ impl fmt::Debug for ProcDir {
 // ProcPidDir
 
 pub struct ProcPidDir {
-    pid: usize,
+    pid: Uuid,
 }
 
 impl DirectoryObject for ProcPidDir {
@@ -194,7 +195,7 @@ impl fmt::Debug for ProcPidDir {
 // ProcStatusFile
 
 pub struct ProcStatusFile {
-    pid: usize,
+    pid: Uuid,
 }
 
 impl FileObject for ProcStatusFile {
