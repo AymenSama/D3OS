@@ -248,11 +248,12 @@ impl FileObject for ProcPsFile {
         // fill the File with Process Data
         let mut content = String::new();
         // first line
-        content.push_str(&format!("{:>10}{:>10}{:>10}{:>10}\n", "PID","UTIME","STIME","RSS")); 
+        content.push_str(&format!("{:>36}{:>20}{:>10}{:>10}{:>10}\n", "PID","NAME","UTIME","STIME","RSS"));
         // dynamically fill rest
         for proc in processes {
-            content.push_str(&format!("{:>10}{:>10}{:>10}{:>10}\n", 
+            content.push_str(&format!("{:>36}{:>20}{:>10}{:>10}{:>10}\n",
                 proc.pid(),
+                proc.name(),
                 proc.utime(),
                 proc.stime(),
                 proc.rss_in_bytes()));

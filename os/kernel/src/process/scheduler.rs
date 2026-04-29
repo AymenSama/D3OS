@@ -549,12 +549,12 @@ impl Scheduler {
 
         // Current
         let cur = self.current_thread();
-        let _ = writeln!(out, "PID: {}, TID: {}, State: {:?}", cur.process().id(), cur.id(), ThreadState::Running);
+        let _ = writeln!(out, "PID: {}, TID: {}, State: {:?}, Name: {}", cur.process().id(), cur.id(), ThreadState::Running, cur.process().name());
 
         // Ready Queue
         let state = self.get_ready_state();
         for thread in state.ready_queue.iter() {
-            let _ = writeln!(out, "PID: {}, TID: {}, State: {:?}", thread.process().id(), thread.id(), thread.state());
+            let _ = writeln!(out, "PID: {}, TID: {}, State: {:?}, Name: {}", thread.process().id(), thread.id(), thread.state(), thread.process().name());
         }
 
         // Sleep List
@@ -562,14 +562,14 @@ impl Scheduler {
         for entry in sleep_list.iter() {
             // You used thread.0 in dump(), so keep that shape
             let t = &entry.0;
-            let _ = writeln!(out, "PID: {}, TID: {}, State: {:?}", t.process().id(), t.id(), t.state());
+            let _ = writeln!(out, "PID: {}, TID: {}, State: {:?}, Name: {}", t.process().id(), t.id(), t.state(), t.process().name());
         }
         drop(sleep_list);
 
         // Block list
         let block_list = self.blocked_list.lock();
         for thread in block_list.iter() {
-            let _ = writeln!(out, "PID: {}, TID: {}, State: {:?}", thread.process().id(), thread.id(), thread.state());
+            let _ = writeln!(out, "PID: {}, TID: {}, State: {:?}, Name: {}", thread.process().id(), thread.id(), thread.state(), thread.process().name());
         }
         drop(block_list);
 

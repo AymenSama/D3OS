@@ -6,6 +6,7 @@
    ║ Author: Fabian Ruhland, HHU                                             ║
    ╚═════════════════════════════════════════════════════════════════════════╝
 */
+use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use log::warn;
@@ -24,6 +25,7 @@ static UUID_CONTEXT: Mutex<ContextV7> = Mutex::new(ContextV7::new());
 pub struct Process {
     /// The process ID is a UUID so that its ID is unique across hosts and reboots.
     id: Uuid,
+    name: String,
     pub virtual_address_space: VirtualAddressSpace,
     pub utime: AtomicU64,
     pub stime: AtomicU64,
@@ -32,16 +34,16 @@ pub struct Process {
 
 
 impl Process {
-    pub fn new(page_tables: Arc<Paging>) -> Self {
-        Self::new_with_id(page_tables, Self::next_id())
+    pub fn new(page_tables: Arc<Paging>, name: String) -> Self {
+        Self::new_with_id(page_tables, Self::next_id(), name)
     }
     
     pub fn new_kernel(page_tables: Arc<Paging>) -> Self {
-        Self::new_with_id(page_tables, Uuid::nil())
+        Self::new_with_id(page_tables, Uuid::nil(), "kernel".into())
     }
     
-    fn new_with_id(page_tables: Arc<Paging>, id: Uuid) -> Self {
-        Self { id, 
+    fn new_with_id(page_tables: Arc<Paging>, id: Uuid, name: String) -> Self {
+        Self { id, name,
             virtual_address_space: VirtualAddressSpace::new(page_tables), 
             utime: AtomicU64::new(0), // track the time spent in User-Mode
             stime: AtomicU64::new(0), // track the time spent in Kernel-Mode 
@@ -69,6 +71,11 @@ impl Process {
     /// Return the id of the process
     pub fn id(&self) -> Uuid {
         self.id
+    }
+    
+    /// Return the name of the process
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     /// Return the utime of the process

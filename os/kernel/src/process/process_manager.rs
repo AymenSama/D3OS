@@ -6,6 +6,7 @@
    ║ Author: Fabian Ruhland, Univ. Duesseldorf, 20.07.2025                   ║
    ╚═════════════════════════════════════════════════════════════════════════╝
 */
+use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use log::info;
@@ -34,10 +35,10 @@ impl ProcessManager {
     }
 
     /// Create a new process
-    pub fn create_process(&mut self) -> Arc<Process> {
+    pub fn create_process(&mut self, name: String) -> Arc<Process> {
         let kernel_process = self.kernel_process().expect("No kernel process found!");
         let paging = vmm::clone_address_space(&(kernel_process.virtual_address_space));
-        let process = Arc::new(Process::new(paging));
+        let process = Arc::new(Process::new(paging, name));
         self.active_processes.push(Arc::clone(&process));
         process
     }
@@ -169,7 +170,7 @@ impl ProcessManager {
         }
 
         for (i, process) in self.active_processes.iter().enumerate() {
-            info!("Process #{}: PID={}", i, process.id());
+            info!("Process #{}: PID={}, name={}", i, process.id(), process.name());
             process.virtual_address_space.dump(process.id());
         }
         info!("=============================");
