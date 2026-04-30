@@ -42,6 +42,7 @@
 
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
+use uuid::Uuid;
 use core::ops::{Add, Range};
 use log::{info, warn};
 use spin::RwLock;
@@ -377,7 +378,7 @@ impl VirtualAddressSpace {
     }
 
     /// Dump all virtual memory areas of this address space
-    pub fn dump(&self, pid: usize) {
+    pub fn dump(&self, pid: Uuid) {
         info!("VMAs of process [{pid}]");
         let areas = self.virtual_memory_areas.read();
         for area in areas.iter() {

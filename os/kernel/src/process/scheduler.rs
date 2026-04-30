@@ -33,6 +33,7 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use log::debug;
+use uuid::Uuid;
 use core::fmt::Write;
 use core::sync::atomic::AtomicUsize;
 use core::sync::atomic::Ordering::Relaxed;
@@ -184,7 +185,7 @@ impl Scheduler {
 
 
     /// Return (pid, tid) of current thread
-    pub fn current_ids(&self) -> (usize, usize) {
+    pub fn current_ids(&self) -> (Uuid, usize) {
         let tid = self.current_thread().id();
         let pid = self.current_thread().process().id();
         (pid, tid)
@@ -250,7 +251,7 @@ impl Scheduler {
     /// Prepare to block the calling thread
     /// Used from wait_queue to prepare the thread for blocking and get its (pid, tid) for later `notify_one` and `notify_all` calls
     /// Returns (pid, tid)
-    pub fn park_current(&self) -> (usize, usize) {
+    pub fn park_current(&self) -> (Uuid, usize) {
         let state = self.get_ready_state();
         let thread = Scheduler::current(&state);
         thread.set_state(ThreadState::Parking);
@@ -259,7 +260,7 @@ impl Scheduler {
 
     /// Unblock thread with given (pid, tid). \
     /// Returns true if thread was found and unblocked, false otherwise.
-    pub fn unblock(&self, pid: usize, tid: usize) -> bool {
+    pub fn unblock(&self, pid: Uuid, tid: usize) -> bool {
        // info!("Unblock: Thread with PID={}, TID={}", pid, tid);
 
         // Synchronize against `thread_switch`
@@ -548,12 +549,12 @@ impl Scheduler {
 
         // Current
         let cur = self.current_thread();
-        let _ = writeln!(out, "PID: {}, TID: {}, State: {:?}", cur.process().id(), cur.id(), ThreadState::Running);
+        let _ = writeln!(out, "PID: {}, TID: {}, State: {:?}, Name: {}", cur.process().id(), cur.id(), ThreadState::Running, cur.process().name());
 
         // Ready Queue
         let state = self.get_ready_state();
         for thread in state.ready_queue.iter() {
-            let _ = writeln!(out, "PID: {}, TID: {}, State: {:?}", thread.process().id(), thread.id(), thread.state());
+            let _ = writeln!(out, "PID: {}, TID: {}, State: {:?}, Name: {}", thread.process().id(), thread.id(), thread.state(), thread.process().name());
         }
 
         // Sleep List
@@ -561,14 +562,14 @@ impl Scheduler {
         for entry in sleep_list.iter() {
             // You used thread.0 in dump(), so keep that shape
             let t = &entry.0;
-            let _ = writeln!(out, "PID: {}, TID: {}, State: {:?}", t.process().id(), t.id(), t.state());
+            let _ = writeln!(out, "PID: {}, TID: {}, State: {:?}, Name: {}", t.process().id(), t.id(), t.state(), t.process().name());
         }
         drop(sleep_list);
 
         // Block list
         let block_list = self.blocked_list.lock();
         for thread in block_list.iter() {
-            let _ = writeln!(out, "PID: {}, TID: {}, State: {:?}", thread.process().id(), thread.id(), thread.state());
+            let _ = writeln!(out, "PID: {}, TID: {}, State: {:?}, Name: {}", thread.process().id(), thread.id(), thread.state(), thread.process().name());
         }
         drop(block_list);
 

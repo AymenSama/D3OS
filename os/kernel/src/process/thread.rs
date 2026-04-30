@@ -155,7 +155,7 @@ impl Thread {
         };
 
         let current_process = process_manager().read().current_process();
-        let new_process = process_manager().write().create_process();
+        let new_process = process_manager().write().create_process(name.into());
         let pid = new_process.id();
 
         info!("load_application: pid = {pid}, name = {name}");

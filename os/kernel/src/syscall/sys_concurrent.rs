@@ -17,8 +17,11 @@ use core::str::from_utf8;
 use syscall::return_vals::{self, Errno};
 use x86_64::VirtAddr;
 
-pub extern "sysv64" fn sys_process_id() -> isize {
-    process_manager().read().current_process().id() as isize
+pub extern "sysv64" fn sys_process_id(destination: *mut u128) -> isize {
+    unsafe { destination.write(
+        process_manager().read().current_process().id().as_u128()
+    ) };
+    0
 }
 
 pub extern "sysv64" fn sys_process_exit() -> ! {

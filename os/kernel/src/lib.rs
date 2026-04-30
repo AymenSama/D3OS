@@ -34,6 +34,7 @@ use crate::process::scheduler::Scheduler;
 use crate::syscall::sys_graphic::LfbInfo;
 use crate::syscall::syscall_dispatcher::CoreLocalStorage;
 use alloc::format;
+use chrono::{DateTime, FixedOffset, TimeDelta};
 use graphic::color::{BLUE, WHITE};
 use ::log::{Level, Log, Record, error};
 use acpi::AcpiTables;
@@ -149,6 +150,35 @@ pub fn cpu() -> &'static Cpu {
 /// Check if EFI system table (and thus runtime services) are available.
 pub fn efi_services_available() -> bool {
     uefi::table::system_table_raw().is_some()
+}
+
+/// Get the current time
+pub fn now() -> Option<DateTime<FixedOffset>> {
+    match uefi::runtime::get_time() {
+        Ok(time) => {
+            if time.is_valid().is_ok() {
+                let timezone = match time.time_zone() {
+                    Some(timezone) => {
+                        let delta = TimeDelta::try_minutes(timezone as i64).expect("Failed to create TimeDelta struct from timezone");
+                        if timezone >= 0 {
+                            format!("+{:0>2}:{:0>2}", delta.num_hours(), delta.num_minutes() % 60)
+                        } else {
+                            format!("-{:0>2}:{:0>2}", delta.num_hours(), delta.num_minutes() % 60)
+                        }
+                    }
+                    None => "Z".into(),
+                };
+
+                Some(
+                    DateTime::parse_from_rfc3339(format!("{}-{:0>2}-{:0>2}T{:0>2}:{:0>2}:{:0>2}.{:0>9}{}", time.year(), time.month(), time.day(), time.hour(), time.minute(), time.second(), time.nanosecond(), timezone).as_str())
+                    .expect("Failed to parse date from EFI runtime services")
+                )
+            } else {
+                None
+            }
+        }
+        Err(_) => None
+    }
 }
 
 /// Global Descriptor Table.
