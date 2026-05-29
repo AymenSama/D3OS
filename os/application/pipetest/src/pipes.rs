@@ -4,21 +4,17 @@ extern crate alloc;
 
 mod test1;
 mod test2;
+mod test3;
 
-
-use naming::shared_types::OpenOptions;
-use naming::{close, mkfifo, open, read, write};
+use naming::mkfifo;
 use syscall::return_vals::Errno;
 
-use concurrent::{thread,process};
+use concurrent::{process, thread};
 #[allow(unused_imports)]
 use runtime::*;
 use terminal::println;
 
-
-const NR_OF_ITERATIONS: u32 = 6;
 const FIFO_PATH: &str = "/mypipe";
-
 
 #[unsafe(no_mangle)]
 pub fn main() {
@@ -28,8 +24,8 @@ pub fn main() {
     println!("MAIN: pid={}, tid={}", process.id(), main_tid);
 
     let res = mkfifo(FIFO_PATH);
-    match res { 
-        Ok(_) =>  println!("MAIN:  mkfifo created"),
+    match res {
+        Ok(_) => println!("MAIN:  mkfifo created"),
         Err(e) => {
             if e == Errno::EEXIST {
                 println!("MAIN:  mkfifo pipe already exists");
@@ -41,6 +37,8 @@ pub fn main() {
     }
 
     test1::test1_run();
-    
+
     test2::test2_run();
+
+    test3::test3_run();
 }
