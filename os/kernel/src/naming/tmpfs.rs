@@ -17,7 +17,6 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::fmt::{Debug, Formatter};
 use core::result::Result;
-use core::sync::atomic::AtomicBool;
 use core::sync::atomic::AtomicUsize;
 use core::sync::atomic::Ordering;
 use core::{fmt, ptr};
@@ -322,14 +321,16 @@ struct PipeQueue {
 struct Pipe {
     stat: RwLock<Stat>,
     pq: RwLock<PipeQueue>,
-    count: AtomicUsize,      // number of bytes currently in the pipe
-    open_wq: WaitQueue,      // block open calls as needed by POSIX
-    open_epoch: AtomicUsize, // avoid lost wakeups for open calls
-    open_close_mutex: spin::Mutex<()>,  // protects critical sections in open/closer
-    rx_wq: WaitQueue,        // readers block when pipe is empty
-    wx_wq: WaitQueue,        // writers block when pipe is full
-    has_reader: AtomicBool,  // true if opened for reading
-    has_writer: AtomicBool,  // true if opened for writing
+    count: AtomicUsize,                // number of bytes currently in the pipe
+    open_wq: WaitQueue,                // block open calls as needed by POSIX
+    open_epoch: AtomicUsize,           // avoid lost wakeups for open calls
+    open_close_mutex: spin::Mutex<()>, // protects critical sections in open/close
+    rx_wq: WaitQueue,                  // readers block when pipe is empty
+    wx_wq: WaitQueue,                  // writers block when pipe is full
+    reader_count: AtomicUsize,         // number of read endpoints
+    writer_count: AtomicUsize,         // number of write endpoints
+    reader_open_epoch: AtomicUsize,    // increments whenever a reader endpoint is published
+    writer_open_epoch: AtomicUsize,    // increments whenever a writer endpoint is published
 }
 
 impl Pipe {
@@ -352,9 +353,11 @@ impl Pipe {
             open_epoch: AtomicUsize::new(0),
             open_close_mutex: spin::Mutex::new(()),
 
-            // single-reader/single-writer enforcement
-            has_reader: AtomicBool::new(false),
-            has_writer: AtomicBool::new(false),
+            // endpoint accounting
+            reader_count: AtomicUsize::new(0),
+            writer_count: AtomicUsize::new(0),
+            reader_open_epoch: AtomicUsize::new(0),
+            writer_open_epoch: AtomicUsize::new(0),
         }
     }
 
@@ -366,8 +369,8 @@ impl Pipe {
             }
             // Sleep until either the condition becomes true OR the epoch changed.
             // Epoch change means "some open/close transition happened, re-check".
-           let e = self.epoch();
-           self.open_wq.wait(|| cond() || self.epoch() != e, why);
+            let e = self.epoch();
+            self.open_wq.wait(|| cond() || self.epoch() != e, why);
             // loop to re-check; handles spurious wakes and epoch-only wakes.
         }
     }
@@ -384,12 +387,12 @@ impl Pipe {
 
     #[inline]
     fn has_reader(&self) -> bool {
-        self.has_reader.load(Ordering::SeqCst)
+        self.reader_count.load(Ordering::SeqCst) > 0
     }
 
     #[inline]
     fn has_writer(&self) -> bool {
-        self.has_writer.load(Ordering::SeqCst)
+        self.writer_count.load(Ordering::SeqCst) > 0
     }
 
     // required to check if we have a lost wakeup for open calls
@@ -404,6 +407,18 @@ impl Pipe {
         self.open_epoch.fetch_add(1, Ordering::SeqCst);
         self.open_wq.notify_all();
     }
+
+    #[inline]
+    fn increment_reader_count_and_epoch(&self) {
+        self.reader_count.fetch_add(1, Ordering::SeqCst);
+        self.reader_open_epoch.fetch_add(1, Ordering::SeqCst);
+    }
+
+    #[inline]
+    fn increment_writer_count_and_epoch(&self) {
+        self.writer_count.fetch_add(1, Ordering::SeqCst);
+        self.writer_open_epoch.fetch_add(1, Ordering::SeqCst);
+    }
 }
 
 impl PipeObject for Pipe {
@@ -415,17 +430,17 @@ impl PipeObject for Pipe {
                 let _g = self.open_close_mutex.lock();
                 //info!("PipeObject::open: READONLY, handle = {}, pid = {}, tid = {}, name = '{}'", handle, pid, tid, name);
 
-                if self.has_reader.load(Ordering::SeqCst) {
-                    return Err(Errno::EBUSY);
-                }
-
                 // publish reader-present
-                self.has_reader.store(true, Ordering::SeqCst);
+                self.increment_reader_count_and_epoch();
+                let writer_open_epoch = self.writer_open_epoch.load(Ordering::SeqCst);
                 self.bump_epoch_and_wake_open();
                 drop(_g);
 
-                // block until a writer is present.
-                self.wait_open(|| self.has_writer.load(Ordering::SeqCst), "open: reader waiting for writer");
+                // block until at least one writer is present OR the epoch changed.
+                self.wait_open(
+                    || self.has_writer() || self.writer_open_epoch.load(Ordering::SeqCst) != writer_open_epoch,
+                    "open: reader waiting for writer",
+                );
                 Ok(0)
             }
 
@@ -433,17 +448,17 @@ impl PipeObject for Pipe {
                 let _g = self.open_close_mutex.lock();
                 //info!("PipeObject::open: WRITEONLY, handle = {}, pid = {}, tid = {}, name = '{}'", handle, pid, tid, name);
 
-                if self.has_writer.load(Ordering::SeqCst) {
-                    return Err(Errno::EBUSY);
-                }
-
                 // publish writer-present
-                self.has_writer.store(true, Ordering::SeqCst);
+                self.increment_writer_count_and_epoch();
+                let reader_open_epoch = self.reader_open_epoch.load(Ordering::SeqCst);
                 self.bump_epoch_and_wake_open();
                 drop(_g);
 
-                // block until a reader is present
-                self.wait_open(|| self.has_reader.load(Ordering::SeqCst), "open: writer waiting for reader");
+                // block until at least one reader is present OR the epoch changed.
+                self.wait_open(
+                    || self.has_reader() || self.reader_open_epoch.load(Ordering::SeqCst) != reader_open_epoch,
+                    "open: writer waiting for reader",
+                );
                 Ok(0)
             }
 
@@ -511,9 +526,9 @@ impl PipeObject for Pipe {
         }
 
         // If we read at least one byte we freed space
-        // -> wake potentially blocked writer
+        // -> wake potentially blocked writers
         if total_read > 0 {
-            self.wx_wq.notify_one();
+            self.wx_wq.notify_all();
         }
 
         Ok(total_read)
@@ -572,10 +587,9 @@ impl PipeObject for Pipe {
             }
         }
 
-        // If we wrote at least one byte we wake up potentially blocked reader
+        // If we wrote at least one byte we wake up potentially blocked readers
         if total_written > 0 {
-            info!("PipeObject::write: done, total_written={}, notify_one, pid={}, tid={}", total_written, pid, tid);
-            self.rx_wq.notify_one();
+            self.rx_wq.notify_all();
         }
         Ok(total_written)
     }
@@ -588,20 +602,30 @@ impl PipeObject for Pipe {
 
         match flags {
             OpenOptions::READONLY => {
-                self.has_reader.store(false, Ordering::SeqCst);
-                self.bump_epoch_and_wake_open(); // wake open waiters
-                self.wx_wq.notify_all(); // writers blocked on full/space or EPIPE checks
+                let readers = self.reader_count.load(Ordering::SeqCst);
+                if readers > 0 {
+                    self.reader_count.store(readers - 1, Ordering::SeqCst);
+                    if readers == 1 {
+                        self.bump_epoch_and_wake_open(); // wake open waiters
+                        self.wx_wq.notify_all(); // writers blocked on full/space or EPIPE checks
+                    }
+                }
             }
             OpenOptions::WRITEONLY => {
-                self.has_writer.store(false, Ordering::SeqCst);
-                self.bump_epoch_and_wake_open(); // wake open waiters
-                self.rx_wq.notify_all(); // readers blocked on empty/EOF checks
+                let writers = self.writer_count.load(Ordering::SeqCst);
+                if writers > 0 {
+                    self.writer_count.store(writers - 1, Ordering::SeqCst);
+                    if writers == 1 {
+                        self.bump_epoch_and_wake_open(); // wake open waiters
+                        self.rx_wq.notify_all(); // readers blocked on empty/EOF checks
+                    }
+                }
             }
             _ => {}
         }
 
         // If we have no readers and no writers, we can reset the pipe buffer to avoid keeping data around indefinitely.
-        if !self.has_reader.load(Ordering::SeqCst) && !self.has_writer.load(Ordering::SeqCst) {
+        if !self.has_reader() && !self.has_writer() {
             //info!("PipeObject::close: resetting pipe buffer, pid={}, tid={}", pid, tid);
             let (rx, wx) = mpmc::bounded::scq::queue(PIPE_SIZE);
             let mut pq = self.pq.write();
