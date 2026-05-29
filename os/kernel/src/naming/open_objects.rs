@@ -53,20 +53,31 @@ pub(super) fn open(path: &str, flags: OpenOptions) -> Result<usize, Errno> {
         }
     }
 
-    // call the 'open' for pipes specific behavior
-    if found_named_object.is_pipe() {
-            found_named_object.as_pipe()?.open(flags)?; // ignore return value
-    }
-
-    // call the 'open' for a directory with flag `WRITEONLY` 
+    // call the 'open' for a directory with flag `WRITEONLY`
     if found_named_object.is_dir() {
         if flags.contains(OpenOptions::WRITEONLY) || flags.contains(OpenOptions::READWRITE) {
             return Err(Errno::EISDIR);
         }
     }
 
+    let opened_pipe = if found_named_object.is_pipe() {
+        let pipe = found_named_object.as_pipe()?.clone();
+        pipe.open(flags)?; // ignore return value
+        Some(pipe)
+    } else {
+        None
+    };
+
     // try to allocate an new handle
-    get_open_object_table().allocate_handle(Arc::new(OpenedObject::new(Arc::new(found_named_object), AtomicUsize::new(0), flags)))
+    let result = get_open_object_table().allocate_handle(Arc::new(OpenedObject::new(Arc::new(found_named_object), AtomicUsize::new(0), flags)));
+
+    if result.is_err() {
+        if let Some(pipe) = opened_pipe {
+            pipe.close(flags);
+        }
+    }
+
+    result
 }
 
 pub(super) fn write(fh: usize, buf: &[u8]) -> Result<usize, Errno> {
@@ -131,7 +142,7 @@ pub fn seek(fh: usize, offset: isize, origin: SeekOrigin) -> Result<usize, Errno
                 let new_pos = match origin {
                     SeekOrigin::Start => offset,
                     SeekOrigin::End => file.stat()?.size as isize + offset,
-                    SeekOrigin::Current => opened_object.pos.load(Ordering::SeqCst) as isize + offset
+                    SeekOrigin::Current => opened_object.pos.load(Ordering::SeqCst) as isize + offset,
                 } as usize;
                 opened_object.pos.store(new_pos, Ordering::SeqCst);
                 Ok(new_pos) // Success
