@@ -147,3 +147,5 @@ rustc-ice-*.txt
 .cursor/
 AGENTS.md
 context/
+.agents/
+skills-lock.json
