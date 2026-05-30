@@ -32,6 +32,7 @@ args = [
     "-machine", "q35,nvdimm=on,pcspk-audiodev=audio0",
     "-m", "512M,slots=2,maxmem=1G",
     "-cpu", "Haswell,fsgsbase",
+    "-smp", "4", # 4 CPUs
     "-bios", "RELEASEX64_OVMF.fd",
     "-boot", "d",
     "-vga", "none",
@@ -78,6 +79,7 @@ args = [
     "-machine", "q35,nvdimm=on,pcspk-audiodev=audio0",
     "-m", "512M,slots=2,maxmem=1G",
     "-cpu", "Haswell",
+    "-smp", "4", # 4 CPUs
     "-bios", "${WSL_BIOS_PATH}",
     "-boot", "d",
     "-vga", "std",
@@ -115,6 +117,7 @@ args = [
     "-machine", "q35,nvdimm=on,pcspk-audiodev=audio0",
     "-m", "512M,slots=2,maxmem=1G",
     "-cpu", "Haswell",
+    "-smp", "4", # 4 CPUs
     "-bios", "RELEASEX64_OVMF.fd",
     "-boot", "c",
     "-vga", "none",
