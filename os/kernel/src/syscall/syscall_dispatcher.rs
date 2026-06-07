@@ -36,11 +36,6 @@ use super::sys_net::{
     sys_sock_can_recv, sys_sock_can_send
 };
 use super::sys_system_info::sys_map_build_info;
-use super::sys_terminal::{
-    sys_terminal_check_input_state, sys_terminal_read_input,
-    sys_terminal_read_output, sys_terminal_write_input,
-    sys_terminal_write_output,
-};
 use super::sys_time::{sys_get_date, sys_get_system_time, sys_set_date};
 use super::sys_vmem::{sys_map_memory, sys_map_frame_buffer};
 use super::sys_shm::{sys_shm_attach, sys_shm_detach, sys_shm_open, sys_shm_unlink};
@@ -93,11 +88,6 @@ impl SyscallTable {
     pub const fn new() -> Self {
         SyscallTable {
             handle: [
-                sys_terminal_read_input as *const _,
-                sys_terminal_write_input as *const _,
-                sys_terminal_check_input_state as *const _,
-                sys_terminal_write_output as *const _,
-                sys_terminal_read_output as *const _,
                 sys_map_memory as *const _,
                 sys_map_frame_buffer as *const _,
                 sys_process_execute_binary as *const _,
