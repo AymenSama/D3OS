@@ -2,10 +2,11 @@ use core::cell::RefCell;
 
 use alloc::{format, rc::Rc, string::String, vec::Vec};
 use globals::hotkeys::HKEY_TOGGLE_TERMINAL_WINDOW;
+use naming::shared_types::OpenOptions;
 use pc_keyboard::{DecodedKey, EventDecoder, HandleControl, KeyCode, KeyEvent};
 use pc_keyboard::layouts::{AnyLayout, De105Key};
 use stream::{event_to_u16, OutputStream, RawInputStream};
-use syscall::{SystemCall, syscall};
+use terminal_lib::session::{read_ctl, CtlRecord, Session, WaitState};
 use terminal_lib::{DecodedKeyType, TerminalInputState, TerminalMode};
 
 use crate::{
@@ -96,6 +97,12 @@ pub struct InputObserver {
     decoder: EventDecoder<AnyLayout>,
     mode: TerminalMode,
     canonical: Canonical,
+    /// Lazily opened handle to the session control record. The emulator polls
+    /// it for the foreground app's requested mode and wait-state.
+    ctl: Option<usize>,
+    /// Lazily opened writer on the session `in` FIFO. Held open for the session
+    /// lifetime so input typeahead is not lost between foreground apps.
+    in_writer: Option<usize>,
 }
 
 impl InputObserver {
@@ -109,6 +116,43 @@ impl InputObserver {
             ),
             mode: TerminalMode::Raw,
             canonical: Canonical::new(),
+            ctl: None,
+            in_writer: None,
+        }
+    }
+
+    /// Poll the userspace control record. Returns `Some(record)` only once an
+    /// application has published one; `None` means no foreground app is
+    /// currently reading input.
+    fn poll_ctl(&mut self) -> Option<CtlRecord> {
+        if self.ctl.is_none() {
+            self.ctl = naming::open(&Session::current().ctl_path(), OpenOptions::READWRITE).ok();
+        }
+        let handle = self.ctl?;
+        match read_ctl(handle) {
+            Ok(record) if record.is_published() => Some(record),
+            _ => None,
+        }
+    }
+
+    /// Resolve the current foreground input mode from the control record.
+    /// `None` means no foreground app is currently waiting for input.
+    fn resolve_mode(&self, record: Option<CtlRecord>) -> Option<TerminalMode> {
+        match record {
+            Some(record) if record.wait == WaitState::Waiting => Some(record.mode),
+            _ => None,
+        }
+    }
+
+    /// Deliver a decoded input buffer to the foreground application over the
+    /// session `in` FIFO.
+    fn deliver(&mut self, buffer: &[u8]) {
+        if self.in_writer.is_none() {
+            // Blocks until the foreground reader is present 
+            self.in_writer = naming::open(&Session::current().in_path(), OpenOptions::WRITEONLY).ok();
+        }
+        if let Some(handle) = self.in_writer {
+            let _ = naming::write(handle, buffer);
         }
     }
 }
@@ -117,20 +161,21 @@ impl Worker for InputObserver {
     fn run(&mut self) {
         let Some(key_event) = self.terminal.read_event_nb() else { return };
 
-        // Get terminal input state (canonical, fluid, idle)
-        let raw_state = syscall(SystemCall::TerminalCheckInputState, &[]).expect("Unable to check input state");
-        let state = TerminalInputState::from(raw_state);
+        let record = self.poll_ctl();
+        let use_pipe = record.is_some();
+        let mode = self.resolve_mode(record);
+
+        if let Some(mode) = mode {
+            self.mode = mode;
+        }
 
         // Process key event into decoded key (unicode char or raw keycode)
         let Some(decoded_key) = self.decoder.process_keyevent(key_event.clone()) else {
             // This returns none if the key event was a key release
             // In this case, we only process the byte if the terminal is in raw mode
-            if self.mode == TerminalMode::Raw {
+            if use_pipe && self.mode == TerminalMode::Raw {
                 if let Some(buffer) = self.buffer_raw(key_event) {
-                    syscall(
-                        SystemCall::TerminalWriteInput,
-                        &[buffer.as_ptr() as usize, buffer.len(), TerminalMode::Raw as usize],
-                    ).expect("System call TerminalWriteInput failed");
+                    self.deliver(&buffer);
                 }
             }
 
@@ -143,20 +188,18 @@ impl Worker for InputObserver {
         };
 
         // Buffer the decoded key based on the terminal input state
-        let (buffer, mode) = match state {
-            TerminalInputState::Canonical => (self.buffer_canonical(decoded_key), TerminalMode::Canonical),
-            TerminalInputState::Fluid => (self.buffer_fluid(decoded_key), TerminalMode::Fluid),
-            TerminalInputState::Raw => (self.buffer_raw(key_event), TerminalMode::Raw),
-            TerminalInputState::Idle => return
+        let buffer = match mode {
+            Some(TerminalMode::Canonical) => self.buffer_canonical(decoded_key),
+            Some(TerminalMode::Fluid) => self.buffer_fluid(decoded_key),
+            Some(TerminalMode::Raw) => self.buffer_raw(key_event),
+            None => return,
         };
         let Some(buffer) = buffer else {
             return;
         };
 
-        syscall(
-            SystemCall::TerminalWriteInput,
-            &[buffer.as_ptr() as usize, buffer.len(), mode as usize],
-        ).expect("System call TerminalWriteInput failed");
+        // Reaching here means a foreground app is actively waiting for input.
+        self.deliver(&buffer);
     }
 }
 

@@ -20,6 +20,7 @@ use operator::Operator;
 use stream::OutputStream;
 use terminal::lfb_terminal::LFBTerminal;
 use terminal_lib::init_logger;
+use terminal_lib::session::Session;
 use util::banner::create_banner_string;
 use worker::cursor::Cursor;
 use worker::input_observer::InputObserver;
@@ -38,7 +39,7 @@ use worker::worker::Worker;
 ///
 /// The terminal is running single threaded but has been structured to support multi threading in future if needed.
 ///
-/// Author: Sebastian Keller
+/// Authors: Sebastian Keller, Aymen Sellami
 pub struct TerminalEmulator {
     terminal: Rc<LFBTerminal>,
     event_handler: Rc<RefCell<EventHandler>>,
@@ -65,6 +66,11 @@ impl TerminalEmulator {
     }
 
     pub fn init(&mut self) {
+        // Create the session namespace (/term/0/{in,out,ctl}) before any app or
+        // observer opens an endpoint. The emulator owns this session in phase 1.
+        Session::current()
+            .create()
+            .expect("failed to create terminal session");
         self.terminal.write_str(&create_banner_string());
         self.operator.create();
     }
