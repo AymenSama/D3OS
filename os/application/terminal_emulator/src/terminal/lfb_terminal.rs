@@ -183,7 +183,7 @@ impl LFBTerminal {
             LFBTerminal::scroll_up(&mut display, &mut color);
             cursor.pos.0 = 0;
             cursor.pos.1 = display.size.1 - 1;
-            let pos = (0, display.size.1);
+            let pos = cursor.pos;
 
             LFBTerminal::print_char_at(&mut display, &mut color, '_', pos);
         }
