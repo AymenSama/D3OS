@@ -1765,6 +1765,7 @@ version = "0.1.0"
 dependencies = [
  "log",
  "logger",
+ "naming",
  "num_enum",
  "pc-keyboard",
  "spin 0.9.8",
@@ -1784,6 +1785,7 @@ dependencies = [
  "graphic",
  "input",
  "log",
+ "naming",
  "num_enum",
  "pc-keyboard",
  "runtime",
