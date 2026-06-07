@@ -425,44 +425,47 @@ impl PipeObject for Pipe {
     fn open(&self, flags: OpenOptions) -> Result<usize, Errno> {
         let (_pid, _tid) = scheduler().current_ids();
 
-        match flags {
-            OpenOptions::READONLY => {
-                let _g = self.open_close_mutex.lock();
-                //info!("PipeObject::open: READONLY, handle = {}, pid = {}, tid = {}, name = '{}'", handle, pid, tid, name);
+        // direction flags are checked with contains(...)
+        // so combined flags like READONLY | NONBLOCK are accepted
+        if flags.contains(OpenOptions::READONLY) {
+            let _g = self.open_close_mutex.lock();
+            //info!("PipeObject::open: READONLY, handle = {}, pid = {}, tid = {}, name = '{}'", handle, pid, tid, name);
 
-                // publish reader-present
-                self.increment_reader_count_and_epoch();
-                let writer_open_epoch = self.writer_open_epoch.load(Ordering::SeqCst);
-                self.bump_epoch_and_wake_open();
-                drop(_g);
+            // publish reader-present
+            self.increment_reader_count_and_epoch();
+            let writer_open_epoch = self.writer_open_epoch.load(Ordering::SeqCst);
+            self.bump_epoch_and_wake_open();
+            drop(_g);
 
-                // block until at least one writer is present OR the epoch changed.
+            // Non-blocking readers return immediately:
+            // they make their presence known to writers but never wait for one.
+            // Blocking readers rendezvous: wait until a writer is present OR the
+            // writer epoch changed.
+            if !flags.contains(OpenOptions::NONBLOCK) {
                 self.wait_open(
                     || self.has_writer() || self.writer_open_epoch.load(Ordering::SeqCst) != writer_open_epoch,
                     "open: reader waiting for writer",
                 );
-                Ok(0)
             }
+            Ok(0)
+        } else if flags.contains(OpenOptions::WRITEONLY) {
+            let _g = self.open_close_mutex.lock();
+            //info!("PipeObject::open: WRITEONLY, handle = {}, pid = {}, tid = {}, name = '{}'", handle, pid, tid, name);
 
-            OpenOptions::WRITEONLY => {
-                let _g = self.open_close_mutex.lock();
-                //info!("PipeObject::open: WRITEONLY, handle = {}, pid = {}, tid = {}, name = '{}'", handle, pid, tid, name);
+            // publish writer-present
+            self.increment_writer_count_and_epoch();
+            let reader_open_epoch = self.reader_open_epoch.load(Ordering::SeqCst);
+            self.bump_epoch_and_wake_open();
+            drop(_g);
 
-                // publish writer-present
-                self.increment_writer_count_and_epoch();
-                let reader_open_epoch = self.reader_open_epoch.load(Ordering::SeqCst);
-                self.bump_epoch_and_wake_open();
-                drop(_g);
-
-                // block until at least one reader is present OR the epoch changed.
-                self.wait_open(
-                    || self.has_reader() || self.reader_open_epoch.load(Ordering::SeqCst) != reader_open_epoch,
-                    "open: writer waiting for reader",
-                );
-                Ok(0)
-            }
-
-            _ => Err(Errno::EINVAL),
+            // block until at least one reader is present OR the epoch changed.
+            self.wait_open(
+                || self.has_reader() || self.reader_open_epoch.load(Ordering::SeqCst) != reader_open_epoch,
+                "open: writer waiting for reader",
+            );
+            Ok(0)
+        } else {
+            Err(Errno::EINVAL)
         }
     }
 
@@ -477,7 +480,7 @@ impl PipeObject for Pipe {
         //info!("read: pid={}, tid={}", pid, tid);
 
         // check if pipe was opened for reading
-        if options == OpenOptions::WRITEONLY {
+        if options.contains(OpenOptions::WRITEONLY) {
             return Err(Errno::EBADF);
         }
 
@@ -486,12 +489,24 @@ impl PipeObject for Pipe {
             return Ok(0);
         }
 
-        // Block until data is available or writer has gone
-        self.rx_wq.wait(|| self.has_data() || !self.has_writer(), "read: blocks");
+        // `NONBLOCK` readers never sleep: a read returns whatever is currently
+        // buffered (possibly nothing). `Ok(0)` therefore means either EOF or
+        // "would block"; the userspace terminal layer treats both as "no input
+        // right now", which matches the non-blocking fluid/raw behavior.
+        let nonblock = options.contains(OpenOptions::NONBLOCK);
 
-        // EOF if no writer is present and no data available
-        if !self.has_data() && !self.has_writer() {
-            return Ok(0);
+        if nonblock {
+            if !self.has_data() {
+                return Ok(0);
+            }
+        } else {
+            // Block until data is available or writer has gone
+            self.rx_wq.wait(|| self.has_data() || !self.has_writer(), "read: blocks");
+
+            // EOF if no writer is present and no data available
+            if !self.has_data() && !self.has_writer() {
+                return Ok(0);
+            }
         }
 
         // From here we read data
@@ -515,12 +530,14 @@ impl PipeObject for Pipe {
                     total_read += 1;
                 }
                 Err(_) => {
-                    // We consumed all available data but need more
-                    // We block until more data is available or the writer has gone (-> EOF)
-                    self.rx_wq.wait(|| self.has_data() || !self.has_writer(), "read: blocks");
-                    if !self.has_data() {
-                        break;
-                    }
+                    // We consumed all currently available data and return it
+                    // (a read returns the bytes available after the initial wait
+                    // rather than blocking to fill the whole buffer;
+                    // a writer holding its endpoint open must not stall the
+                    // reader). `write` publishes a whole buffer before notifying,
+                    // so a reader woken from the initial wait sees the full
+                    // message atomically.
+                    break;
                 }
             }
         }
@@ -541,7 +558,7 @@ impl PipeObject for Pipe {
         //info!("write: pid={}, tid={}", pid, tid);
 
         // check if pipe was opened for reading
-        if options == OpenOptions::READONLY {
+        if options.contains(OpenOptions::READONLY) {
             return Err(Errno::EBADF);
         }
 
@@ -600,28 +617,26 @@ impl PipeObject for Pipe {
 
         //info!("PipeObject::close: handle = {}, flags={:?}, pid={}, tid={}", fh, flags, pid, tid);
 
-        match flags {
-            OpenOptions::READONLY => {
-                let readers = self.reader_count.load(Ordering::SeqCst);
-                if readers > 0 {
-                    self.reader_count.store(readers - 1, Ordering::SeqCst);
-                    if readers == 1 {
-                        self.bump_epoch_and_wake_open(); // wake open waiters
-                        self.wx_wq.notify_all(); // writers blocked on full/space or EPIPE checks
-                    }
+        // Match the direction with `contains` so that flag combinations such as
+        // `READONLY | NONBLOCK` still decrement the correct endpoint counter.
+        if flags.contains(OpenOptions::READONLY) {
+            let readers = self.reader_count.load(Ordering::SeqCst);
+            if readers > 0 {
+                self.reader_count.store(readers - 1, Ordering::SeqCst);
+                if readers == 1 {
+                    self.bump_epoch_and_wake_open(); // wake open waiters
+                    self.wx_wq.notify_all(); // writers blocked on full/space or EPIPE checks
                 }
             }
-            OpenOptions::WRITEONLY => {
-                let writers = self.writer_count.load(Ordering::SeqCst);
-                if writers > 0 {
-                    self.writer_count.store(writers - 1, Ordering::SeqCst);
-                    if writers == 1 {
-                        self.bump_epoch_and_wake_open(); // wake open waiters
-                        self.rx_wq.notify_all(); // readers blocked on empty/EOF checks
-                    }
+        } else if flags.contains(OpenOptions::WRITEONLY) {
+            let writers = self.writer_count.load(Ordering::SeqCst);
+            if writers > 0 {
+                self.writer_count.store(writers - 1, Ordering::SeqCst);
+                if writers == 1 {
+                    self.bump_epoch_and_wake_open(); // wake open waiters
+                    self.rx_wq.notify_all(); // readers blocked on empty/EOF checks
                 }
             }
-            _ => {}
         }
 
         // If we have no readers and no writers, we can reset the pipe buffer to avoid keeping data around indefinitely.
