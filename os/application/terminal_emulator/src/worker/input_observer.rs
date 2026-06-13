@@ -144,13 +144,26 @@ impl InputObserver {
         }
     }
 
+    /// Open the session `in` writer once a foreground app has published
+    /// `Waiting` on `ctl`, so its blocking reader `open()` can complete.
+    fn ensure_in_writer(&mut self) {
+        if self.in_writer.is_some() {
+            return;
+        }
+        let record = self.poll_ctl();
+        if record.is_some_and(|r| r.wait == WaitState::Waiting) {
+            self.in_writer = naming::open(
+                &Session::current().in_path(),
+                OpenOptions::WRITEONLY,
+            )
+            .ok();
+        }
+    }
+
     /// Deliver a decoded input buffer to the foreground application over the
     /// session `in` FIFO.
     fn deliver(&mut self, buffer: &[u8]) {
-        if self.in_writer.is_none() {
-            // Blocks until the foreground reader is present 
-            self.in_writer = naming::open(&Session::current().in_path(), OpenOptions::WRITEONLY).ok();
-        }
+        self.ensure_in_writer();
         if let Some(handle) = self.in_writer {
             let _ = naming::write(handle, buffer);
         }
@@ -159,6 +172,8 @@ impl InputObserver {
 
 impl Worker for InputObserver {
     fn run(&mut self) {
+        self.ensure_in_writer();
+
         let Some(key_event) = self.terminal.read_event_nb() else { return };
 
         let record = self.poll_ctl();
