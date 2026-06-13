@@ -24,33 +24,22 @@ struct InputEndpoints {
     in_blocking: Option<usize>,
     /// Non-blocking stdin reader, used by fluid/raw key polling.
     in_nonblock: Option<usize>,
-    /// Last (mode, wait) written to `ctl`, to skip redundant writes during
-    /// tight fluid/raw poll loops.
-    last: Option<(TerminalMode, WaitState)>,
 }
 
 static INPUT: Mutex<InputEndpoints> = Mutex::new(InputEndpoints {
     ctl: None,
     in_blocking: None,
     in_nonblock: None,
-    last: None,
 });
 
-/// Publish the requested mode and wait-state on the control plane. Redundant
-/// publishes (same mode/wait as last time) are skipped so a polling reader does
-/// not hammer the control record.
+/// Publish the requested mode and wait-state on the control plane.
 fn publish(mode: TerminalMode, wait: WaitState) {
     let mut input = INPUT.lock();
-    if input.last == Some((mode, wait)) {
-        return;
-    }
     if input.ctl.is_none() {
         input.ctl = naming::open(&Session::current().ctl_path(), OpenOptions::READWRITE).ok();
     }
     if let Some(handle) = input.ctl {
-        if write_ctl(handle, &CtlRecord::new(mode, wait)).is_ok() {
-            input.last = Some((mode, wait));
-        }
+        let _ = write_ctl(handle, &CtlRecord::new(mode, wait));
     }
 }
 
