@@ -1588,6 +1588,17 @@ dependencies = [
  "serde_core",
  "zmij",
 ]
+[[package]]
+name = "session_manager"
+version = "0.1.0"
+dependencies = [
+ "concurrent",
+ "naming",
+ "runtime",
+ "spin 0.10.0",
+ "terminal",
+]
+
 
 [[package]]
 name = "sharded-slab"

@@ -41,8 +41,8 @@ use core::mem::size_of;
 use core::ops::Deref;
 use core::ptr;
 use log::{trace, debug, info, warn, LevelFilter};
-use syscall::ProcessEnvMode;
 use multiboot2::{BootInformation, BootInformationHeader, EFIMemoryMapTag, MemoryAreaType, MemoryMapTag, TagHeader};
+use syscall::ProcessEnvMode;
 use uefi::data_types::Handle;
 use uefi::mem::memory_map::MemoryMap;
 use uefi::runtime::Time;
@@ -391,9 +391,12 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
             "bin/window_manager", "window_manager", &[].to_vec(), &[].to_vec(), ProcessEnvMode::Inherit,
         ).expect("failed to load window_manager"));
     } else {
-        // Create and register the 'terminal_emulator' thread (from app image in ramdisk) in the scheduler
-        scheduler().ready(Thread::load_application("bin/terminal_emulator", "terminal_emulator", &[].to_vec(), &[].to_vec(), ProcessEnvMode::Inherit,
-        ).expect("failed to load terminal_emulator"));
+        // Create and register the 'session_manager' thread (from app image in ramdisk) in the scheduler.
+        // The session manager owns terminal session lifecycle and launches the
+        // terminal emulator and the initial shell itself.
+        scheduler().ready(Thread::load_application(
+            "bin/session_manager", "session_manager", &[].to_vec(), &[].to_vec(), ProcessEnvMode::Inherit,
+        ).expect("failed to load session_manager"));
     }
 
     // Dump information about all processes (including VMAs)
