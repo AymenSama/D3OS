@@ -129,9 +129,17 @@ impl SessionMux {
                 break;
             }
             // Complete a possibly torn 2-byte frame (the manager always writes
-            // whole frames, so this stays aligned).
-            while got < frame.len() {
+            // whole frames, so this stays aligned). We only get here with one
+            // byte read, so the tail is a single byte: one more non-blocking
+            // read returns 0 (nothing available yet) or 1 (frame completed).
+            if got < frame.len() {
                 got += naming::read(handle, &mut frame[got..]).unwrap_or(0);
+            }
+
+            // Don't act on a frame we couldn't finish reading; parsing a torn
+            // frame would consume the first byte and lose sync with the writer.
+            if got < frame.len() {
+                break;
             }
 
             match frame[0] {
