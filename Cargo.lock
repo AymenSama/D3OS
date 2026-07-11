@@ -1776,6 +1776,7 @@ dependencies = [
  "spin 0.9.8",
  "stream",
  "syscall",
+ "bootstrap_env",
 ]
 
 [[package]]

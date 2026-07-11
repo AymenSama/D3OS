@@ -13,9 +13,9 @@
    ║ metadata lives on the `ctl` record, never inside the data streams.      ║
    ║                                                                         ║
    ║ Discovery is centralized here: `Session::current()` is the single       ║
-   ║ resolver every application goes through. Phase 1 resolves a fixed       ║
-   ║ default session by well-known path; later phases can swap the body of   ║
-   ║ `current()` for a launch-time descriptor without touching callers.      ║
+   ║ resolver every application goes through. It reads the launch-time       ║
+   ║ `D3OS_TERM_SESSION` descriptor from the process environment and falls   ║
+   ║ back to the default session when no descriptor is present.              ║
    ║                                                                         ║
    ╟─────────────────────────────────────────────────────────────────────────╢
    ║ Author: Aymen Sellami                                                   ║
@@ -31,22 +31,18 @@ use syscall::return_vals::Errno;
 use crate::TerminalMode;
 
 /// Root of the terminal session namespace.
-pub const SESSION_ROOT: &str = "/term";
+pub const TERM_ROOT: &str = "/term";
 
-/// Phase 1 ships a single foreground session with this id. The protocol is
-/// already keyed by id so that multiple sessions/tabs only require allocating
-/// further ids, not a redesign.
+/// Fallback session id used by processes that are not launched with an explicit
+/// session descriptor, such as the session manager and terminal emulator.
 pub const DEFAULT_SESSION_ID: usize = 0;
 
-/// Argv/environment key under which a launch-time session descriptor will be
-/// passed to child processes once multi-session support lands.
+/// Environment key carrying the launch-time terminal session descriptor.
 ///
 /// The descriptor is the session id as a decimal string, never a raw open
 /// handle: handles are indices into the kernel's global open-object table and
 /// have no per-process meaning, so they cannot be inherited. A child re-opens
-/// its endpoints by path from the id. Until launch-time passing is wired
-/// through process launch (`Thread::copy_args` / `runtime::env`), `current()`
-/// resolves the well-known default session by path.
+/// its endpoints by path from the id.
 pub const SESSION_DESCRIPTOR_KEY: &str = "D3OS_TERM_SESSION";
 
 /// Size of the fixed-layout control record stored in `ctl`. The record never
@@ -167,26 +163,29 @@ pub struct Session {
 impl Session {
     /// Resolve the session the current process belongs to.
     ///
-    /// Phase 1: every process shares the single foreground session at a
-    /// well-known path. Future phases replace this body with a launch-time
-    /// descriptor lookup; callers do not change.
+    /// Resolves the launch-time descriptor [`SESSION_DESCRIPTOR_KEY`] from the
+    /// process environment (set by the session manager when launching an app
+    /// into a specific session, and inherited automatically by children). When
+    /// no descriptor is present - e.g. the session manager and emulator
+    /// themselves, launched directly by the kernel - this falls back to the
+    /// well-known default session [`DEFAULT_SESSION_ID`].
     pub fn current() -> Self {
-        Self::with_id(DEFAULT_SESSION_ID)
+        bootstrap_env::var(SESSION_DESCRIPTOR_KEY)
+            .and_then(|descriptor| Self::from_descriptor(&descriptor))
+            .unwrap_or_else(|| Self::with_id(DEFAULT_SESSION_ID))
     }
 
     /// Resolve a session by explicit id (used by the owner that allocates ids).
     pub fn with_id(id: usize) -> Self {
         Session {
-            base: format!("{}/{}", SESSION_ROOT, id),
+            base: format!("{}/{}", TERM_ROOT, id),
         }
     }
 
-    /// Resolve a session from a launch-time descriptor string (the decimal
-    /// session id). Reserved for the multi-session phase: once descriptors are
-    /// carried through process launch, `current()` will parse the descriptor
-    /// (see [`SESSION_DESCRIPTOR_KEY`]) and delegate here. Centralizing the
-    /// shape now means switching from the fixed default to passed ids touches
-    /// only this module, never the applications.
+    /// Resolve a session from a launch-time descriptor string.
+    ///
+    /// The descriptor is currently the decimal session id carried in
+    /// [`SESSION_DESCRIPTOR_KEY`].
     pub fn from_descriptor(descriptor: &str) -> Option<Self> {
         descriptor.trim().parse::<usize>().ok().map(Self::with_id)
     }
@@ -205,17 +204,16 @@ impl Session {
 
     /// Create the session namespace and its three objects.
     ///
-    /// Best-effort and intended to be called once by the session owner (the
-    /// emulator in Phase 1). Errors on already-existing components are ignored
+    /// Best-effort and intended to be called by the session owner
+    /// (`session_manager`). Errors on already-existing components are ignored
     /// so a restart does not fail. The `ctl` file is left empty, which decodes
-    /// to an *unpublished* record.
-    pub fn create(&self) -> Result<(), Errno> {
-        let _ = naming::mkdir(SESSION_ROOT);
+    /// to an unpublished record.
+    pub fn create(&self) {
+        let _ = naming::mkdir(TERM_ROOT);
         let _ = naming::mkdir(&self.base);
         let _ = naming::mkfifo(&self.in_path());
         let _ = naming::mkfifo(&self.out_path());
         let _ = naming::touch(&self.ctl_path());
-        Ok(())
     }
 
 }

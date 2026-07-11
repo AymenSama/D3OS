@@ -2,6 +2,8 @@
 extern crate alloc;
 
 #[cfg(feature = "userspace")]
+pub mod manager;
+#[cfg(feature = "userspace")]
 pub mod read;
 #[cfg(feature = "userspace")]
 pub mod session;
