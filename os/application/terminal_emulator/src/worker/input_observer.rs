@@ -1,16 +1,19 @@
 use core::cell::RefCell;
 
 use alloc::{format, rc::Rc, string::String, vec::Vec};
-use globals::hotkeys::HKEY_TOGGLE_TERMINAL_WINDOW;
-use naming::shared_types::OpenOptions;
+use globals::hotkeys::{
+    HKEY_CLOSE_TAB, HKEY_NEW_TAB, HKEY_NEXT_TAB, HKEY_PREV_TAB, HKEY_TOGGLE_TERMINAL_WINDOW,
+};
 use pc_keyboard::{DecodedKey, EventDecoder, HandleControl, KeyCode, KeyEvent};
 use pc_keyboard::layouts::{AnyLayout, De105Key};
 use stream::{event_to_u16, OutputStream, RawInputStream};
-use terminal_lib::session::{read_ctl, CtlRecord, Session, WaitState};
-use terminal_lib::{DecodedKeyType, TerminalInputState, TerminalMode};
+use terminal_lib::manager::cmd;
+use terminal_lib::session::{CtlRecord, WaitState};
+use terminal_lib::{DecodedKeyType, TerminalMode};
 
 use crate::{
     event_handler::{Event, EventHandler},
+    sessions::SessionMux,
     terminal::lfb_terminal::LFBTerminal,
 };
 
@@ -97,16 +100,17 @@ pub struct InputObserver {
     decoder: EventDecoder<AnyLayout>,
     mode: TerminalMode,
     canonical: Canonical,
-    /// Lazily opened handle to the session control record. The emulator polls
-    /// it for the foreground app's requested mode and wait-state.
-    ctl: Option<usize>,
-    /// Lazily opened writer on the session `in` FIFO. Held open for the session
-    /// lifetime so input typeahead is not lost between foreground apps.
-    in_writer: Option<usize>,
+    /// Shared session multiplexer: owns per-session endpoints and routes input
+    /// to the active session's foreground app.
+    mux: Rc<RefCell<SessionMux>>,
 }
 
 impl InputObserver {
-    pub const fn new(terminal: Rc<LFBTerminal>, event_handler: Rc<RefCell<EventHandler>>) -> Self {
+    pub fn new(
+        terminal: Rc<LFBTerminal>,
+        event_handler: Rc<RefCell<EventHandler>>,
+        mux: Rc<RefCell<SessionMux>>,
+    ) -> Self {
         Self {
             terminal,
             event_handler,
@@ -116,22 +120,7 @@ impl InputObserver {
             ),
             mode: TerminalMode::Raw,
             canonical: Canonical::new(),
-            ctl: None,
-            in_writer: None,
-        }
-    }
-
-    /// Poll the userspace control record. Returns `Some(record)` only once an
-    /// application has published one; `None` means no foreground app is
-    /// currently reading input.
-    fn poll_ctl(&mut self) -> Option<CtlRecord> {
-        if self.ctl.is_none() {
-            self.ctl = naming::open(&Session::current().ctl_path(), OpenOptions::READWRITE).ok();
-        }
-        let handle = self.ctl?;
-        match read_ctl(handle) {
-            Ok(record) if record.is_published() => Some(record),
-            _ => None,
+            mux,
         }
     }
 
@@ -144,39 +133,19 @@ impl InputObserver {
         }
     }
 
-    /// Open the session `in` writer once a foreground app has published
-    /// `Waiting` on `ctl`, so its blocking reader `open()` can complete.
-    fn ensure_in_writer(&mut self) {
-        if self.in_writer.is_some() {
-            return;
-        }
-        let record = self.poll_ctl();
-        if record.is_some_and(|r| r.wait == WaitState::Waiting) {
-            self.in_writer = naming::open(
-                &Session::current().in_path(),
-                OpenOptions::WRITEONLY,
-            )
-            .ok();
-        }
-    }
-
-    /// Deliver a decoded input buffer to the foreground application over the
-    /// session `in` FIFO.
+    /// Deliver a decoded input buffer to the active session's foreground app.
     fn deliver(&mut self, buffer: &[u8]) {
-        self.ensure_in_writer();
-        if let Some(handle) = self.in_writer {
-            let _ = naming::write(handle, buffer);
-        }
+        self.mux.borrow_mut().deliver(buffer);
     }
 }
 
 impl Worker for InputObserver {
     fn run(&mut self) {
-        self.ensure_in_writer();
+        self.mux.borrow_mut().ensure_active_in_writer();
 
         let Some(key_event) = self.terminal.read_event_nb() else { return };
 
-        let record = self.poll_ctl();
+        let record = self.mux.borrow().active_ctl();
         let use_pipe = record.is_some();
         let mode = self.resolve_mode(record);
 
@@ -223,9 +192,25 @@ impl InputObserver {
         match key {
             DecodedKey::RawKey(HKEY_TOGGLE_TERMINAL_WINDOW) => {
                 self.event_handler.borrow_mut().trigger(Event::EnterGuiMode);
-                return None;
+                None
             }
-            key => return Some(key),
+            DecodedKey::RawKey(HKEY_NEW_TAB) => {
+                self.mux.borrow_mut().send_command(cmd::NEW_TAB);
+                None
+            }
+            DecodedKey::RawKey(HKEY_CLOSE_TAB) => {
+                self.mux.borrow_mut().send_command(cmd::CLOSE_ACTIVE);
+                None
+            }
+            DecodedKey::RawKey(HKEY_NEXT_TAB) => {
+                self.mux.borrow_mut().send_command(cmd::NEXT_TAB);
+                None
+            }
+            DecodedKey::RawKey(HKEY_PREV_TAB) => {
+                self.mux.borrow_mut().send_command(cmd::PREV_TAB);
+                None
+            }
+            key => Some(key),
         }
     }
 

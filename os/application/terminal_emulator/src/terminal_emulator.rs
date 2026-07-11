@@ -4,7 +4,7 @@ extern crate alloc;
 extern crate terminal as terminal_lib;
 
 pub mod event_handler;
-mod operator;
+pub mod sessions;
 pub mod terminal;
 pub mod util;
 mod worker;
@@ -16,18 +16,14 @@ use alloc::vec;
 use concurrent::thread::{self, sleep};
 use event_handler::{Event, EventHandler};
 use graphic::lfb::map_framebuffer;
-use operator::Operator;
-use stream::OutputStream;
+use sessions::SessionMux;
 use terminal::lfb_terminal::LFBTerminal;
 use terminal_lib::init_logger;
-use terminal_lib::session::Session;
-use util::banner::create_banner_string;
 use worker::cursor::Cursor;
 use worker::input_observer::InputObserver;
 
 #[allow(unused_imports)]
 use runtime::*;
-use worker::output_observer::OutputObserver;
 use worker::status_bar::StatusBar;
 use worker::worker::Worker;
 
@@ -35,7 +31,7 @@ use worker::worker::Worker;
 /// The kernel lfb_terminal device has been migrated here and is mostly unchanged.
 ///
 /// Special operations like IO, Cursor or status bar are managed in individual worker objects.
-/// IO-Operations are handled by Input- and OutputObserver.
+/// Input is handled by `InputObserver`; output/session multiplexing is handled by `SessionMux`.
 ///
 /// The terminal is running single threaded but has been structured to support multi threading in future if needed.
 ///
@@ -43,10 +39,9 @@ use worker::worker::Worker;
 pub struct TerminalEmulator {
     terminal: Rc<LFBTerminal>,
     event_handler: Rc<RefCell<EventHandler>>,
+    mux: Rc<RefCell<SessionMux>>,
     input_observer: InputObserver,
-    output_observer: OutputObserver,
     cursor: Cursor,
-    operator: Operator,
     status_bar: StatusBar,
 }
 
@@ -54,31 +49,27 @@ impl TerminalEmulator {
     pub fn new(address: *mut u8, pitch: u32, width: u32, height: u32, bpp: u8) -> Self {
         let terminal = Rc::new(LFBTerminal::new(address, pitch, width, height, bpp));
         let event_handler = Rc::new(RefCell::new(EventHandler::new()));
+        let mux = Rc::new(RefCell::new(SessionMux::new(terminal.clone())));
         Self {
             terminal: terminal.clone(),
-            input_observer: InputObserver::new(terminal.clone(), event_handler.clone()),
-            output_observer: OutputObserver::new(terminal.clone()),
+            input_observer: InputObserver::new(terminal.clone(), event_handler.clone(), mux.clone()),
             cursor: Cursor::new(terminal.clone()),
-            operator: Operator::new(),
             event_handler: event_handler,
+            mux: mux,
             status_bar: StatusBar::new(terminal),
         }
     }
 
     pub fn init(&mut self) {
-        // Create the session namespace (/term/0/{in,out,ctl}) before any app or
-        // observer opens an endpoint. The emulator owns this session in phase 1.
-        Session::current()
-            .create()
-            .expect("failed to create terminal session");
-        self.terminal.write_str(&create_banner_string());
-        self.operator.create();
+        // The session manager owns session lifecycle; the emulator just connects
+        // to the manager namespace and renders the sessions it announces.
+        self.mux.borrow_mut().connect();
     }
 
     pub fn enter_gui(&self) {
         let mut display = self.terminal.display.lock();
         display.lfb.direct_lfb().draw_loader();
-        thread::start_application("window_manager", vec![]).unwrap().join(); // Wait for window manager to exit, then continue
+        let _ = thread::start_application("window_manager", vec![]).unwrap().join(); // Wait for window manager to exit, then continue
         display.lfb.direct_lfb().draw_loader();
         sleep(500); // Solves an issue where sometimes workspaces from the window manager are still visible when toggling quickly between text and gui
         display.lfb.flush();
@@ -87,7 +78,12 @@ impl TerminalEmulator {
     fn run(&mut self) {
         loop {
             self.handle_events();
-            self.output_observer.run();
+            {
+                let mut mux = self.mux.borrow_mut();
+                mux.poll_events();
+                mux.poll_active();
+                mux.drain_outputs();
+            }
             self.input_observer.run();
             self.cursor.run();
             self.status_bar.run();

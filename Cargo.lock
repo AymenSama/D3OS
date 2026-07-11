@@ -1477,8 +1477,8 @@ checksum = "a96887878f22d7bad8a3b6dc5b7440e0ada9a245242924394987b21cf2210a4c"
 name = "runtime"
 version = "0.1.0"
 dependencies = [
- "concurrent",
  "bootstrap_env",
+ "concurrent",
  "linked_list_allocator",
  "syscall",
  "terminal",
@@ -1588,6 +1588,7 @@ dependencies = [
  "serde_core",
  "zmij",
 ]
+
 [[package]]
 name = "session_manager"
 version = "0.1.0"
@@ -1598,7 +1599,6 @@ dependencies = [
  "spin 0.10.0",
  "terminal",
 ]
-
 
 [[package]]
 name = "sharded-slab"
@@ -1779,6 +1779,7 @@ dependencies = [
 name = "terminal"
 version = "0.1.0"
 dependencies = [
+ "bootstrap_env",
  "log",
  "logger",
  "naming",
@@ -1787,7 +1788,6 @@ dependencies = [
  "spin 0.9.8",
  "stream",
  "syscall",
- "bootstrap_env",
 ]
 
 [[package]]
