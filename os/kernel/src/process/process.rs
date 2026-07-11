@@ -31,6 +31,7 @@ pub struct Process {
     pub utime: AtomicU64,
     pub stime: AtomicU64,
     pub rss_user_pages: AtomicU64, // only userpages, because kernel mapping 1:1
+    env: Mutex<Vec<String>>,
 }
 
 
@@ -48,7 +49,8 @@ impl Process {
             virtual_address_space: VirtualAddressSpace::new(page_tables), 
             utime: AtomicU64::new(0), // track the time spent in User-Mode
             stime: AtomicU64::new(0), // track the time spent in Kernel-Mode 
-            rss_user_pages: AtomicU64::new(0) } // track the amount of pages allocated
+            rss_user_pages: AtomicU64::new(0), // track the amount of pages allocated
+            env: Mutex::new(Vec::new()) }
     }
     
     /// Get a new ID for a new process.
@@ -77,6 +79,16 @@ impl Process {
     /// Return the name of the process
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Return a clone of the process environment (`KEY=VALUE` entries).
+    pub fn env(&self) -> Vec<String> {
+        self.env.lock().clone()
+    }
+
+    /// Replace the process environment (`KEY=VALUE` entries).
+    pub fn set_env(&self, env: Vec<String>) {
+        *self.env.lock() = env;
     }
 
     /// Return the utime of the process

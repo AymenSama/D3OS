@@ -9,8 +9,8 @@ unsafe extern "C" {
 // Duplicated from 'kernel/src/consts.rs'
 const USER_SPACE_START: usize = 0x10000000000;
 const USER_SPACE_CODE_START: usize = USER_SPACE_START;
-const USER_SPACE_ENV_START: usize = USER_SPACE_CODE_START + 0x40000000;
-const USER_SPACE_ARG_START: usize = USER_SPACE_ENV_START;
+const USER_SPACE_BOOTSTRAP_START: usize = USER_SPACE_CODE_START + 0x40000000;
+const USER_SPACE_ARG_START: usize = USER_SPACE_BOOTSTRAP_START;
 
 pub(crate) const ARGC_PTR: *const usize = USER_SPACE_ARG_START as *const usize;
 pub(crate) const ARGV_PTR: *const *const u8 = (USER_SPACE_ARG_START + size_of::<*const usize>()) as *const *const u8;
@@ -25,6 +25,11 @@ pub(crate) const HEAP_SIZE: usize = 1024 * 1024 * 1024 * 1024;
 
 pub fn args() -> Args {
     Args::new()
+}
+
+/// Look up an environment variable by key in the bootstrap page.
+pub fn var(key: &str) -> Option<String> {
+    bootstrap_env::var(key)
 }
 
 pub struct Args {

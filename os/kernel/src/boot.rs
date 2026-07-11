@@ -41,6 +41,7 @@ use core::mem::size_of;
 use core::ops::Deref;
 use core::ptr;
 use log::{trace, debug, info, warn, LevelFilter};
+use syscall::ProcessEnvMode;
 use multiboot2::{BootInformation, BootInformationHeader, EFIMemoryMapTag, MemoryAreaType, MemoryMapTag, TagHeader};
 use uefi::data_types::Handle;
 use uefi::mem::memory_map::MemoryMap;
@@ -387,12 +388,11 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     if BOOT_TO_GUI {
         // Create and register the 'window_manager' thread in the scheduler
         scheduler().ready(Thread::load_application(
-            "bin/window_manager", "window_manager", &[].to_vec(),
+            "bin/window_manager", "window_manager", &[].to_vec(), &[].to_vec(), ProcessEnvMode::Inherit,
         ).expect("failed to load window_manager"));
     } else {
         // Create and register the 'terminal_emulator' thread (from app image in ramdisk) in the scheduler
-        scheduler().ready(Thread::load_application(
-            "bin/terminal_emulator", "terminal_emulator", &[].to_vec(),
+        scheduler().ready(Thread::load_application("bin/terminal_emulator", "terminal_emulator", &[].to_vec(), &[].to_vec(), ProcessEnvMode::Inherit,
         ).expect("failed to load terminal_emulator"));
     }
 

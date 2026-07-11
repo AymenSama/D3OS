@@ -14,6 +14,27 @@ use crate::return_vals::SyscallResult;
 
 pub mod return_vals;
 
+/// Process-launch environment handling mode for [`SystemCall::ProcessExecuteBinary`].
+#[repr(usize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessEnvMode {
+    /// Child inherits the launching process's environment.
+    Inherit = 0,
+    /// Child receives the explicit environment vector passed with the syscall.
+    Override = 1,
+}
+
+impl ProcessEnvMode {
+    /// Decode the raw syscall argument.
+    pub fn from_usize(value: usize) -> Option<Self> {
+        match value {
+            0 => Some(Self::Inherit),
+            1 => Some(Self::Override),
+            _ => None,
+        }
+    }
+}
+
 /// Enum with all known system calls
 #[repr(u16)] // Cannot use full size of rax, because ax is needed to set up fs/gs in syscall_handler()
 #[allow(dead_code)]

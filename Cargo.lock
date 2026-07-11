@@ -150,6 +150,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "812e12b5285cc515a9c72a5c1d3b6d46a19dac5acfef5265968c166106e31dd3"
 
 [[package]]
+name = "bootstrap_env"
+version = "0.1.0"
+
+[[package]]
 name = "built"
 version = "0.7.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1474,6 +1478,7 @@ name = "runtime"
 version = "0.1.0"
 dependencies = [
  "concurrent",
+ "bootstrap_env",
  "linked_list_allocator",
  "syscall",
  "terminal",
