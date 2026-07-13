@@ -252,6 +252,8 @@ impl SessionMux {
         screen.push_output(create_banner_string().as_bytes());
         self.sessions.insert(id, screen);
 
+        self.publish_tabs();
+
         if self.active == id {
             self.render_active();
         }
@@ -269,11 +271,21 @@ impl SessionMux {
                 let _ = naming::close(handle);
             }
         }
+        self.publish_tabs();
     }
 
     fn switch_to(&mut self, id: u8) {
         self.active = id;
+        self.publish_tabs();
         self.render_active();
+    }
+
+    /// Push the current live session ids and active id into the terminal so the
+    /// status bar can render tabs. The `update_tabs` lock is released before any
+    /// drawing call, so this must not run while the `display` lock is held.
+    fn publish_tabs(&self) {
+        let ids: alloc::vec::Vec<u8> = self.sessions.keys().copied().collect();
+        self.terminal.update_tabs(&ids, self.active);
     }
 
     /// Clear the screen and replay the active session's buffer to reconstruct it.

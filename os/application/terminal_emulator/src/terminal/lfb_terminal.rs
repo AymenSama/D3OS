@@ -206,6 +206,19 @@ impl LFBTerminal {
         )
     }
 
+    /// Update the status-bar tab snapshot from the session multiplexer.
+    ///
+    /// `ids` must be the live session ids in ascending order; `active` is the
+    /// internal id of the active session. This only mutates the snapshot behind
+    /// the `display` lock and returns immediately, so callers must release it
+    /// before invoking any drawing method (which re-locks `display`).
+    pub fn update_tabs(&self, ids: &[u8], active: u8) {
+        let mut display = self.display.lock();
+        display.tab_ids.clear();
+        display.tab_ids.extend_from_slice(ids);
+        display.active_tab = active;
+    }
+
     pub fn draw_status_bar(display: &mut DisplayState) {
         // Draw background
         for i in 0..display.size.0 as u32 * lfb::DEFAULT_CHAR_WIDTH {

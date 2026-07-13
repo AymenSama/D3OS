@@ -16,6 +16,8 @@ pub struct DisplayState {
     pub(crate) size: (u16, u16),
     pub(crate) lfb: BufferedLFB,
     pub(crate) char_buffer: Vec<Character>,
+    pub(crate) tab_ids: Vec<u8>,
+    pub(crate) active_tab: u8,
 }
 
 impl DisplayState {
@@ -44,6 +46,8 @@ impl DisplayState {
             size,
             lfb,
             char_buffer,
+            tab_ids: Vec::new(),
+            active_tab: u8::MAX,
         }
     }
 }
