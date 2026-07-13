@@ -34,7 +34,7 @@
    ║ Author: Fabian Ruhland & Michael Schoettner, 04.01.2026, HHU            ║
    ╚═════════════════════════════════════════════════════════════════════════╝
 */
-
+use alloc::alloc::alloc;
 use crate::consts::MAIN_USER_STACK_START;
 use crate::consts::MAX_USER_STACK_SIZE;
 use crate::consts::USER_SPACE_BOOTSTRAP_START;
@@ -51,6 +51,7 @@ use crate::{process_manager, tss};
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::alloc::Layout;
 use core::arch::naked_asm;
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -65,6 +66,8 @@ use x86_64::PrivilegeLevel::Ring3;
 use x86_64::VirtAddr;
 use x86_64::structures::gdt::SegmentSelector;
 use x86_64::structures::paging::Page;
+use crate::device::cpu;
+use crate::device::cpu::{XSaveComponents, XSaveState};
 
 /// kernel & user stack of a thread
 struct Stacks {
@@ -104,6 +107,7 @@ pub struct Thread {
     entry: extern "sysv64" fn(),
     state: AtomicU8,
     wake_pending: AtomicBool, // false => allowed to block; true => do NOT block (wake pending)
+    xsave_state: XSaveState
 }
 
 impl Stacks {
@@ -142,6 +146,7 @@ impl Thread {
             entry,
             state: AtomicU8::new(ThreadState::Created.as_u8()),
             wake_pending: AtomicBool::new(false),
+            xsave_state: XSaveState::new()
         };
 
         thread.prepare_kernel_stack();
@@ -220,6 +225,7 @@ impl Thread {
             entry,
             state: AtomicU8::new(ThreadState::Created.as_u8()),
             wake_pending: AtomicBool::new(false),
+            xsave_state: XSaveState::new()
         };
 
         thread.prepare_kernel_stack();
@@ -304,6 +310,14 @@ impl Thread {
     /// Return my thread id
     pub fn id(&self) -> usize {
         self.id
+    }
+
+    pub fn store_fpu_context(&self) {
+        cpu::xsave(&self.xsave_state, XSaveComponents::X87_FPU | XSaveComponents::SSE | XSaveComponents::AVX)
+    }
+
+    pub fn restore_fpu_context(&self) {
+        cpu::xrstor(&self.xsave_state, XSaveComponents::X87_FPU | XSaveComponents::SSE | XSaveComponents::AVX)
     }
 
     /// Helper function, returns highest useable stack address of kernel stack  of 'self'
@@ -605,6 +619,13 @@ impl Thread {
 unsafe extern "C" fn thread_kernel_start(old_rsp0: u64) {
     naked_asm!(
         "mov rsp, rdi", // First parameter -> load 'old_rsp0'
+
+        // Set Task Switched bit in CR0
+        "mov rax, cr0",
+        "or rax, 0x00000008",
+        "mov cr0, rax",
+
+        // Load registers from prepared stack
         "pop rax",
         "wrgsbase rax",
         "pop rax",
@@ -676,6 +697,11 @@ unsafe extern "C" fn thread_switch(current_rsp0: *mut u64, next_rsp0: u64, next_
 
     // Switch address space (fourth parameter 'next_cr3')
     "mov cr3, rcx",
+
+    // Set Task Switched bit in CR0
+    "mov rax, cr0",
+    "or rax, 0x00000008",
+    "mov cr0, rax",
 
     // Load registers of next thread by using 'next_rsp0' (second parameter)
     "mov rsp, rsi",
