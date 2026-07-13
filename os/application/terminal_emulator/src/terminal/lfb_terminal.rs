@@ -220,48 +220,122 @@ impl LFBTerminal {
     }
 
     pub fn draw_status_bar(display: &mut DisplayState) {
-        // Draw background
-        for i in 0..display.size.0 as u32 * lfb::DEFAULT_CHAR_WIDTH {
+        let total_cols = display.size.0 as u32;
+
+        Self::draw_status_background(display, total_cols);
+        let used_cols = Self::draw_status_tabs(display, total_cols);
+        let date_start = Self::draw_status_date(display, total_cols, used_cols);
+        Self::draw_status_info(display, used_cols, date_start);
+
+        display.lfb.flush_lines(0, lfb::DEFAULT_CHAR_HEIGHT);
+    }
+
+    fn draw_status_background(display: &mut DisplayState, total_cols: u32) {
+        for i in 0..total_cols * lfb::DEFAULT_CHAR_WIDTH {
             for j in 0..lfb::DEFAULT_CHAR_HEIGHT {
                 display.lfb.lfb().draw_pixel(i, j, color::HHU_GREEN);
             }
         }
+    }
 
-        // Collect system information
-        let uptime = systime();
-        let process_count = process::count();
-        let thread_count = thread::count();
-        let system_info = system_info();
+    fn draw_status_tabs(display: &mut DisplayState, total_cols: u32) -> u32 {
+        // Snapshot the tab state so we don't hold a borrow of `display` while
+        // issuing the mutable framebuffer calls below.
+        let tab_ids = display.tab_ids.clone();
+        let active = display.active_tab;
 
-        // Draw info string
-        let info_string = format!(
-            "D³OS v{} ({}) | Uptime: {:0>2}:{:0>2}:{:0>2} | Processes: {} | Threads: {}",
-            system_info.pkg_version,
-            system_info.profile,
-            uptime.num_hours(),
-            uptime.num_minutes() % 60,
-            uptime.num_seconds() - (uptime.num_minutes() * 60),
-            process_count,
-            thread_count
-        );
+        // Tabs (highest priority) are drawn left-aligned. The user-facing label
+        // is a dense display ordinal derived from the live-session order, never
+        // the internal session id. Only whole tabs that fit are drawn.
+        let mut used_cols: u32 = 0;
+        for (index, &id) in tab_ids.iter().enumerate() {
+            let label = format!(" {} ", index + 1);
+            let label_cols = label.chars().count() as u32;
+            if used_cols + label_cols > total_cols {
+                break;
+            }
+            let (fg, bg) = if id == active {
+                (color::WHITE, color::HHU_BLUE) // inverse / high-contrast
+            } else {
+                (color::HHU_BLUE, color::INVISIBLE) // normal bar styling
+            };
+            display.lfb.lfb().draw_string(
+                used_cols * lfb::DEFAULT_CHAR_WIDTH,
+                0,
+                fg,
+                bg,
+                &label,
+            );
+            used_cols += label_cols;
+        }
 
-        display
-            .lfb
-            .lfb()
-            .draw_string(0, 0, color::HHU_BLUE, color::INVISIBLE, info_string.as_str());
+        used_cols
+    }
 
-        // Draw date
+    fn draw_status_date(display: &mut DisplayState, total_cols: u32, used_cols: u32) -> u32 {
+        // Date/time (second priority), right-aligned, drawn only when it fits
+        // after the tabs with at least one gap column. `total_cols` doubles as a
+        // "no date drawn" sentinel for the info budget below.
         let date_str = date().format("%Y-%m-%d %H:%M:%S").to_string();
+        let date_cols = date_str.chars().count() as u32;
+        let mut date_start = total_cols;
+        if date_cols < total_cols && total_cols - date_cols > used_cols {
+            date_start = total_cols - date_cols;
+            display.lfb.lfb().draw_string(
+                date_start * lfb::DEFAULT_CHAR_WIDTH,
+                0,
+                color::HHU_BLUE,
+                color::INVISIBLE,
+                &date_str,
+            );
+        }
 
-        display.lfb.lfb().draw_string(
-            (display.size.0 as u32 - date_str.len() as u32) * lfb::DEFAULT_CHAR_WIDTH,
-            0,
-            color::HHU_BLUE,
-            color::INVISIBLE,
-            &date_str,
-        );
+        date_start
+    }
 
-        display.lfb.flush_lines(0, lfb::DEFAULT_CHAR_HEIGHT);
+    fn draw_status_info(display: &mut DisplayState, used_cols: u32, date_start: u32) {
+        // System info (lowest priority) fills the gap between tabs and date,
+        // choosing the most detailed variant that fits and dropping entirely
+        // when there is no room.
+        let info_start = used_cols + 1; // one gap column after the tabs
+        let info_end = date_start.saturating_sub(1); // one gap column before date
+        if info_end > info_start {
+            let available = info_end - info_start;
+
+            let uptime = systime();
+            let uptime_str = format!(
+                "{:0>2}:{:0>2}:{:0>2}",
+                uptime.num_hours(),
+                uptime.num_minutes() % 60,
+                uptime.num_seconds() - (uptime.num_minutes() * 60),
+            );
+            let system_info = system_info();
+
+            let full = format!(
+                "D³OS v{} ({}) | Uptime: {} | Processes: {} | Threads: {}",
+                system_info.pkg_version,
+                system_info.profile,
+                uptime_str,
+                process::count(),
+                thread::count(),
+            );
+            let medium = format!("Up {} | P:{} T:{}", uptime_str, process::count(), thread::count());
+            let short = format!("Up {}", uptime_str);
+
+            let info = [full, medium, short]
+                .into_iter()
+                .find(|candidate| candidate.chars().count() as u32 <= available);
+
+            if let Some(info) = info {
+                display.lfb.lfb().draw_string(
+                    info_start * lfb::DEFAULT_CHAR_WIDTH,
+                    0,
+                    color::HHU_BLUE,
+                    color::INVISIBLE,
+                    &info,
+                );
+            }
+        }
     }
 
     fn scroll_up(display: &mut DisplayState, color: &mut ColorState) {
