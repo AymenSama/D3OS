@@ -5,6 +5,8 @@ use graphic::{
     lfb::{self, LFB},
 };
 
+/// A presented character cell: the framebuffer renderer's snapshot of what is
+/// currently on screen, used to restore the cell under a blinking cursor.
 #[derive(Copy, Clone)]
 pub struct Character {
     pub value: char,
@@ -12,10 +14,20 @@ pub struct Character {
     pub bg_color: Color,
 }
 
+/// Framebuffer presentation state. This owns only what is needed to draw the
+/// active session's semantic model onto the screen; the authoritative terminal
+/// state (grid, cursor, colors, parser) lives per session in `TerminalModel`.
 pub struct DisplayState {
+    /// Full framebuffer grid size in cells: `(cols, rows)`. Row 0 is the status
+    /// bar; content is drawn on rows `1..rows`.
     pub(crate) size: (u16, u16),
     pub(crate) lfb: BufferedLFB,
-    pub(crate) char_buffer: Vec<Character>,
+    /// Snapshot of the presented cells (`cols * rows`), row-major.
+    pub(crate) visible: Vec<Character>,
+    /// Grid position of the cursor overlay.
+    pub(crate) cursor_pos: (u16, u16),
+    /// Whether the cursor block is currently drawn over `cursor_pos`.
+    pub(crate) cursor_visible: bool,
     pub(crate) tab_ids: Vec<u8>,
     pub(crate) active_tab: u8,
 }
@@ -29,11 +41,11 @@ impl DisplayState {
             (height / lfb::DEFAULT_CHAR_HEIGHT) as u16,
         );
 
-        let mut char_buffer =
-            Vec::with_capacity(size.0 as usize * size.1 as usize * size_of::<Character>());
-        for _ in 0..char_buffer.capacity() {
-            char_buffer.push(Character {
-                value: ' ',
+        let cell_count = size.0 as usize * size.1 as usize;
+        let mut visible = Vec::with_capacity(cell_count);
+        for _ in 0..cell_count {
+            visible.push(Character {
+                value: '\0',
                 fg_color: color::WHITE,
                 bg_color: color::BLACK,
             });
@@ -45,7 +57,9 @@ impl DisplayState {
         Self {
             size,
             lfb,
-            char_buffer,
+            visible,
+            cursor_pos: (0, 1),
+            cursor_visible: false,
             tab_ids: Vec::new(),
             active_tab: u8::MAX,
         }

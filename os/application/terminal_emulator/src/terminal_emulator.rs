@@ -67,12 +67,16 @@ impl TerminalEmulator {
     }
 
     pub fn enter_gui(&self) {
-        let mut display = self.terminal.display.lock();
-        display.lfb.direct_lfb().draw_loader();
-        let _ = thread::start_application("window_manager", vec![]).unwrap().join(); // Wait for window manager to exit, then continue
-        display.lfb.direct_lfb().draw_loader();
-        sleep(500); // Solves an issue where sometimes workspaces from the window manager are still visible when toggling quickly between text and gui
-        display.lfb.flush();
+        {
+            let mut display = self.terminal.display.lock();
+            display.lfb.direct_lfb().draw_loader();
+            let _ = thread::start_application("window_manager", vec![]).unwrap().join(); // Wait for window manager to exit, then continue
+            display.lfb.direct_lfb().draw_loader();
+            sleep(500); // Solves an issue where sometimes workspaces from the window manager are still visible when toggling quickly between text and gui
+            display.lfb.flush();
+        }
+        // Repaint the active session over the loader screen once we are back.
+        self.mux.borrow().present_active();
     }
 
     fn run(&mut self) {

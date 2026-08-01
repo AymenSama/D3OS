@@ -5,12 +5,12 @@
    ║                                                                         ║
    ║ The emulator is a pure renderer/input client of the standalone          ║
    ║ `session_manager`. This module owns, per live session, the endpoints    ║
-   ║ (`out` reader, `ctl` reader, lazily-opened `in` writer) and a bounded   ║
-   ║ replay buffer of recent output. Every loop it drains *every* session's  ║
-   ║ `out` FIFO into that session's buffer (so background apps never block    ║
-   ║ on the bounded pipe), and renders only the active session to the         ║
-   ║ framebuffer. Switching tabs clears the screen and replays the target     ║
-   ║ session's buffer.                                                       ║
+   ║ (`out` reader, `ctl` reader, lazily-opened `in` writer), a semantic      ║
+   ║ terminal model, and a canonical line editor. Every loop it drains        ║
+   ║ *every* session's `out` FIFO into that session's model (so background     ║
+   ║ apps never block on the bounded pipe), and renders only the active        ║
+   ║ session's damage to the framebuffer. Switching tabs presents the target   ║
+   ║ session's semantic viewport in one repaint - no history is replayed.     ║
    ║                                                                         ║
    ║ It also speaks the manager protocol: it consumes `created`/`destroyed`  ║
    ║ events, polls the active session id from the manager `ctl` record, and  ║
@@ -20,25 +20,20 @@
    ╚═════════════════════════════════════════════════════════════════════════╝
 */
 
-use alloc::collections::{btree_map::BTreeMap, vec_deque::VecDeque};
+use alloc::collections::btree_map::BTreeMap;
 use alloc::rc::Rc;
 
 use naming::shared_types::OpenOptions;
-use stream::OutputStream;
 use terminal_lib::manager;
 use terminal_lib::session::{read_ctl, CtlRecord, Session, WaitState};
 
-use crate::terminal::{lfb_terminal::LFBTerminal, terminal::Terminal};
+use crate::terminal::ansi::SemanticTerminal;
+use crate::terminal::lfb_terminal::LFBTerminal;
 use crate::util::banner::create_banner_string;
+use crate::worker::canonical::{CanonicalAction, CanonicalEditor};
 
 /// Bytes drained from a session `out` pipe per loop iteration.
 const OUT_READ_CHUNK: usize = 256;
-
-/// Upper bound on a session's replay buffer. The buffer reconstructs the screen
-/// on a tab switch; older bytes are dropped once this is exceeded (D3OS has no
-/// scrollback). This is the userspace backpressure boundary that replaces the
-/// bounded kernel pipe for background sessions.
-const RING_CAPACITY: usize = 64 * 1024;
 
 /// Sentinel "no active session selected yet" so the first manager `ctl` poll
 /// always triggers an initial render.
@@ -52,26 +47,20 @@ struct SessionScreen {
     ctl: Option<usize>,
     /// Lazily-opened writer on the session `in` FIFO (app stdin).
     in_writer: Option<usize>,
-    /// Bounded replay buffer of recent output for screen reconstruction.
-    buffer: VecDeque<u8>,
+    /// Semantic screen state: parser + grid + cursor + colors + scrollback.
+    terminal: SemanticTerminal,
+    /// Canonical-mode line editor for this session.
+    canonical: CanonicalEditor,
 }
 
 impl SessionScreen {
-    fn new() -> Self {
+    fn new(terminal: SemanticTerminal) -> Self {
         Self {
             out: None,
             ctl: None,
             in_writer: None,
-            buffer: VecDeque::new(),
-        }
-    }
-
-    fn push_output(&mut self, bytes: &[u8]) {
-        for &byte in bytes {
-            if self.buffer.len() >= RING_CAPACITY {
-                self.buffer.pop_front();
-            }
-            self.buffer.push_back(byte);
+            terminal,
+            canonical: CanonicalEditor::new(),
         }
     }
 }
@@ -167,8 +156,9 @@ impl SessionMux {
         }
     }
 
-    /// Drain every session's output: append to its replay buffer (so background
-    /// writers never block on the bounded pipe) and live-render the active one.
+    /// Drain every session's output: feed it to that session's semantic model
+    /// (so background writers never block on the bounded pipe) and repaint the
+    /// active session's damaged rows.
     pub fn drain_outputs(&mut self) {
         let active = self.active;
         let terminal = self.terminal.clone();
@@ -181,11 +171,9 @@ impl SessionMux {
             if read == 0 {
                 continue;
             }
-            screen.push_output(&buffer[0..read]);
+            let damage = screen.terminal.feed(&buffer[0..read]);
             if *id == active {
-                for &byte in &buffer[0..read] {
-                    terminal.write_byte(byte);
-                }
+                terminal.present_damage(screen.terminal.model(), damage);
             }
         }
     }
@@ -229,6 +217,30 @@ impl SessionMux {
         }
     }
 
+    /// Apply a canonical-mode edit to the active session: echo into that
+    /// session's semantic terminal (repainting it) and, on submit, deliver the
+    /// completed line to its foreground app.
+    pub fn handle_canonical(&mut self, action: CanonicalAction) {
+        let active = self.active;
+        let terminal = self.terminal.clone();
+
+        let submit = {
+            let Some(screen) = self.sessions.get_mut(&active) else {
+                return;
+            };
+            let effect = screen.canonical.apply(action);
+            if !effect.echo.is_empty() {
+                let damage = screen.terminal.feed(effect.echo.as_bytes());
+                terminal.present_damage(screen.terminal.model(), damage);
+            }
+            effect.submit
+        };
+
+        if let Some(bytes) = submit {
+            self.deliver(&bytes);
+        }
+    }
+
     /// Forward a one-shot UI command to the manager.
     pub fn send_command(&mut self, command: u8) {
         if let Some(handle) = self.manager_cmd {
@@ -236,26 +248,34 @@ impl SessionMux {
         }
     }
 
+    /// Repaint the active session's full viewport (used after GUI mode returns).
+    pub fn present_active(&self) {
+        if let Some(screen) = self.sessions.get(&self.active) {
+            self.terminal.present_full(screen.terminal.model());
+        }
+    }
+
     fn add_session(&mut self, id: u8) {
         if self.sessions.contains_key(&id) {
             return;
         }
+        let mut screen = SessionScreen::new(SemanticTerminal::new(self.terminal.screen_size()));
         let session = Session::with_id(id as usize);
-        let mut screen = SessionScreen::new();
         screen.out = naming::open(
             &session.out_path(),
             OpenOptions::READONLY | OpenOptions::NONBLOCK,
         )
         .ok();
         screen.ctl = naming::open(&session.ctl_path(), OpenOptions::READWRITE).ok();
-        // Seed the banner so each tab shows it and it survives tab switches.
-        screen.push_output(create_banner_string().as_bytes());
+        // Seed the banner so each tab shows it (survives tab switches via the
+        // semantic model, not a byte replay ring).
+        let _ = screen.terminal.feed(create_banner_string().as_bytes());
         self.sessions.insert(id, screen);
 
         self.publish_tabs();
 
         if self.active == id {
-            self.render_active();
+            self.present_active();
         }
     }
 
@@ -277,7 +297,7 @@ impl SessionMux {
     fn switch_to(&mut self, id: u8) {
         self.active = id;
         self.publish_tabs();
-        self.render_active();
+        self.present_active();
     }
 
     /// Push the current live session ids and active id into the terminal so the
@@ -286,15 +306,5 @@ impl SessionMux {
     fn publish_tabs(&self) {
         let ids: alloc::vec::Vec<u8> = self.sessions.keys().copied().collect();
         self.terminal.update_tabs(&ids, self.active);
-    }
-
-    /// Clear the screen and replay the active session's buffer to reconstruct it.
-    fn render_active(&self) {
-        self.terminal.clear();
-        if let Some(screen) = self.sessions.get(&self.active) {
-            for &byte in &screen.buffer {
-                self.terminal.write_byte(byte);
-            }
-        }
     }
 }
