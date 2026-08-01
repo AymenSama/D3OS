@@ -1822,6 +1822,7 @@ dependencies = [
  "terminal",
  "time",
  "uefi",
+ "unifont",
 ]
 
 [[package]]
