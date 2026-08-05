@@ -224,9 +224,57 @@ impl TerminalModel {
         self.damage.reset();
     }
 
+    pub(crate) fn cell(&self, col: u16, row: u16) -> Option<Cell> {
+        self.grid
+            .get(row as usize)
+            .and_then(|row| row.cells.get(col as usize))
+            .copied()
+    }
+
     fn set_cell(&mut self, col: u16, row: u16, cell: Cell) {
         if (row as usize) < self.grid.len() && col < self.size.cols {
             self.grid[row as usize].cells[col as usize] = cell;
+        }
+    }
+
+    /// Blank any wide glyph that a write to `[col, col + width)` would cut in
+    /// half.
+    ///
+    /// A wide glyph is a lead cell plus continuation cells the renderer skips,
+    /// so overwriting either half on its own leaves the survivor to be redrawn
+    /// across the new character. Callers must run this *before* writing, since
+    /// it inspects the cells it is about to blank.
+    fn clear_wide_overlap(&mut self, col: u16, row: u16, width: u16) {
+        self.clear_wide_glyph_at(col, row);
+        if width > 1 {
+            self.clear_wide_glyph_at(col.saturating_add(width - 1), row);
+        }
+    }
+
+    /// Blank the whole wide glyph covering `col`, if there is one.
+    fn clear_wide_glyph_at(&mut self, col: u16, row: u16) {
+        let cols = self.size.cols as usize;
+        let blank = Cell::with('\0', &self.color);
+        let Some(grid_row) = self.grid.get_mut(row as usize) else {
+            return;
+        };
+        if col as usize >= cols {
+            return;
+        }
+
+        // Walk back to the lead cell: continuation cells carry width 0.
+        let mut lead = col as usize;
+        while lead > 0 && grid_row.cells[lead].width == 0 {
+            lead -= 1;
+        }
+
+        let span = grid_row.cells[lead].width as usize;
+        if span < 2 {
+            return;
+        }
+
+        for cell in grid_row.cells[lead..(lead + span).min(cols)].iter_mut() {
+            *cell = blank;
         }
     }
 
@@ -239,12 +287,26 @@ impl TerminalModel {
             // backspace: move left (saturating) and blank the vacated cell
             self.cursor.col = self.cursor.col.saturating_sub(1);
             let (col, row) = (self.cursor.col, self.cursor.row);
+            self.clear_wide_overlap(col, row, 1);
             self.set_cell(col, row, Cell::with(' ', &self.color));
             self.damage.mark_row(row);
         } else {
             let width = char_columns(c);
             if width > 0 {
+                // A glyph too wide for the remaining columns moves to the next
+                // row before it is placed. Writing its lead cell into the last
+                // column instead would leave the renderer drawing it past the
+                // right edge, with no continuation cell to suppress.
+                if self.cursor.col.saturating_add(width) > self.size.cols {
+                    let row = self.cursor.row;
+                    if let Some(grid_row) = self.grid.get_mut(row as usize) {
+                        grid_row.wrapped = true;
+                    }
+                    self.position((0, row + 1));
+                }
+
                 let (col, row) = (self.cursor.col, self.cursor.row);
+                self.clear_wide_overlap(col, row, width);
                 let lead = Cell {
                     value: c,
                     fg_color: self.color.fg_color,
@@ -384,6 +446,9 @@ impl TerminalModel {
 
     fn clear_screen(&mut self) {
         self.fill_cells(|_| true, '\0');
+        for row in self.grid.iter_mut() {
+            row.wrapped = false;
+        }
         self.damage.mark_full();
     }
 
@@ -401,15 +466,26 @@ impl TerminalModel {
 
     fn clear_line_range(&mut self, from: u16, to: u16, value: char) {
         let row = self.cursor.row;
-        if (row as usize) >= self.grid.len() {
+        if (row as usize) >= self.grid.len() || from >= to {
             return;
         }
+
+        // The range boundaries may fall inside a wide glyph.
+        self.clear_wide_overlap(from, row, to.saturating_sub(from));
+
         for c in from..to {
             if c >= self.size.cols {
                 break;
             }
             self.grid[row as usize].cells[c as usize] = Cell::with(value, &self.color);
         }
+
+        // A row cleared to its end no longer continues onto the next one. This
+        // also covers a newline, which clears from the cursor.
+        if to >= self.size.cols {
+            self.grid[row as usize].wrapped = false;
+        }
+
         self.damage.mark_row(row);
     }
 

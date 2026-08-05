@@ -8,11 +8,14 @@ use graphic::{
 
 /// A presented character cell: the framebuffer renderer's snapshot of what is
 /// currently on screen, used to restore the cell under a blinking cursor.
+/// `width` mirrors the model's cell span, so the cursor overlay can leave the
+/// continuation cells of a wide glyph alone.
 #[derive(Copy, Clone)]
 pub struct Character {
     pub value: char,
     pub fg_color: Color,
     pub bg_color: Color,
+    pub width: u8,
 }
 
 impl Character {
@@ -20,6 +23,7 @@ impl Character {
         value: '\0',
         fg_color: color::WHITE,
         bg_color: color::BLACK,
+        width: 1,
     };
 }
 

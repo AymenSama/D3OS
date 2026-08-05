@@ -161,16 +161,24 @@ impl LFBTerminal {
     /// Draw one content row of `model` into the buffered framebuffer and update
     /// the presented-cell snapshot. Continuation cells of wide glyphs are
     /// recorded but not drawn (their lead cell already covered the columns).
+    ///
+    /// Cells the model does not have are drawn blank rather than indexed: the
+    /// grid is sized from this framebuffer today, but nothing in the type
+    /// system says so, and a mismatch must not be a panic.
     fn present_row(display: &mut DisplayState, model: &TerminalModel, r: u16) {
         let cols = display.size.0;
-        let row = &model.grid[r as usize];
         for c in 0..cols {
-            let cell = row.cells[c as usize];
+            let cell = model.cell(c, r);
             let idx = (r * cols + c) as usize;
-            display.visible[idx] = Character {
+            display.visible[idx] = cell.map_or(Character::BLANK, |cell| Character {
                 value: cell.value,
                 fg_color: cell.fg_color,
                 bg_color: cell.bg_color,
+                width: cell.width,
+            });
+
+            let Some(cell) = cell else {
+                continue;
             };
 
             if cell.width == 0 {
@@ -197,6 +205,12 @@ impl LFBTerminal {
         }
         let idx = (row * display.size.0 + col) as usize;
         let cell = display.visible[idx];
+        if cell.width == 0 {
+            // Nothing was drawn over a continuation cell, so there is nothing
+            // to put back - and redrawing it would erase half a wide glyph.
+            display.cursor_visible = false;
+            return;
+        }
         let glyph = if cell.value == '\0' { ' ' } else { cell.value };
         display.lfb.direct_lfb().draw_char(
             col as u32 * lfb::DEFAULT_CHAR_WIDTH,
@@ -218,6 +232,10 @@ impl LFBTerminal {
         }
         let idx = (row * display.size.0 + col) as usize;
         let cell = display.visible[idx];
+        if cell.width == 0 {
+            // Blinking on the second half of a wide glyph would chop it up.
+            return;
+        }
         let show_block = !display.cursor_visible;
 
         let glyph = if show_block {
