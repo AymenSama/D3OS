@@ -264,16 +264,24 @@ impl TerminalModel {
         self.damage.mark_cursor();
     }
 
+    /// Last addressable column, and last addressable content row.
+    fn last_col(&self) -> u16 {
+        self.size.cols.saturating_sub(1)
+    }
+
+    fn last_row(&self) -> u16 {
+        self.size.rows.saturating_sub(1)
+    }
+
     /// Set the cursor position, mapping the reserved row 0 to the first content
     /// row and scrolling when the target overflows the grid.
+    ///
+    /// Columns are clamped here rather than at each call site: a cursor past
+    /// the last column silently swallows every subsequent write, because
+    /// `set_cell` drops out-of-range cells.
     fn position(&mut self, pos: (u16, u16)) {
-        if pos.1 == 0 {
-            self.cursor.col = pos.0;
-            self.cursor.row = 1;
-        } else {
-            self.cursor.col = pos.0;
-            self.cursor.row = pos.1;
-        }
+        self.cursor.col = pos.0.min(self.last_col());
+        self.cursor.row = if pos.1 == 0 { 1 } else { pos.1 };
 
         while self.cursor.row >= self.size.rows {
             self.cursor.row -= 1;
@@ -462,85 +470,75 @@ impl TerminalModel {
         }
     }
 
+    /// Cursor sequences.
+    ///
+    /// Every branch computes with saturating arithmetic and clamps before
+    /// moving: the parameters come straight off the wire, so `\x1b[9A` at the
+    /// top of the screen or `\x1b[9D` in column 0 must be a no-op rather than
+    /// an underflow. Movement counts default to 1 when the sequence omits the
+    /// parameter, absolute positions default to 0.
     fn handle_ansi_cursor_sequence(&mut self, code: u8, params: &Params) {
         let mut iter = params.iter();
         match code {
             0x41 => {
                 // Cursor up
-                if let Some(p) = iter.next() {
-                    let y_move = p[0];
-                    let row = self.cursor.row - if y_move == 0 { 1 } else { y_move };
-                    self.position((self.cursor.col, if row > 0 { row } else { 0 }));
-                }
+                let row = self.cursor.row.saturating_sub(movement_count(&mut iter));
+                self.position((self.cursor.col, row));
             }
             0x42 => {
-                // Cursor down
-                if let Some(p) = iter.next() {
-                    let y_move = p[0];
-                    let row = self.cursor.row + if y_move == 0 { 1 } else { y_move };
-                    self.position((
-                        self.cursor.col,
-                        if row < self.size.rows { row } else { self.size.rows - 1 },
-                    ));
-                }
+                // Cursor down. Never scrolls, unlike a newline.
+                let row = self
+                    .cursor
+                    .row
+                    .saturating_add(movement_count(&mut iter))
+                    .min(self.last_row());
+                self.position((self.cursor.col, row));
             }
             0x43 => {
                 // Cursor right
-                if let Some(p) = iter.next() {
-                    let x_move = p[0];
-                    let column = self.cursor.col + if x_move == 0 { 1 } else { x_move };
-                    self.position((
-                        if column < self.size.cols { column } else { self.size.cols - 1 },
-                        self.cursor.row,
-                    ));
-                }
+                let column = self.cursor.col.saturating_add(movement_count(&mut iter));
+                self.position((column, self.cursor.row));
             }
             0x44 => {
                 // Cursor left
-                if let Some(p) = iter.next() {
-                    let x_move = p[0];
-                    let column = self.cursor.col - if x_move == 0 { 1 } else { x_move };
-                    self.position((if column > 0 { column } else { 0 }, self.cursor.row));
-                }
+                let column = self.cursor.col.saturating_sub(movement_count(&mut iter));
+                self.position((column, self.cursor.row));
             }
             0x45 => {
                 // Cursor to start of next line(s)
-                if let Some(p) = iter.next() {
-                    let row = self.cursor.row + p[0] + 1;
-                    self.position((0, if row < self.size.rows { row } else { self.size.rows - 1 }));
-                }
+                let row = self
+                    .cursor
+                    .row
+                    .saturating_add(absolute_position(&mut iter))
+                    .saturating_add(1)
+                    .min(self.last_row());
+                self.position((0, row));
             }
             0x46 => {
                 // Cursor to start of previous line(s)
-                if let Some(p) = iter.next() {
-                    let row = self.cursor.row - p[0] - 1;
-                    self.position((0, if row > 0 { row } else { 0 }));
-                }
+                let row = self
+                    .cursor
+                    .row
+                    .saturating_sub(absolute_position(&mut iter))
+                    .saturating_sub(1);
+                self.position((0, row));
             }
             0x47 => {
                 // Cursor to column
-                if let Some(p) = iter.next() {
-                    let column = p[0];
-                    self.position((
-                        if column < self.size.cols { column } else { self.size.cols - 1 },
-                        self.cursor.row,
-                    ));
-                }
+                self.position((absolute_position(&mut iter), self.cursor.row));
             }
             0x48 | 0x66 => {
-                // Set cursor position. Historically param 1 is column, param 2 row.
+                // Set cursor position. Historically param 1 is column, param 2
+                // row, both zero-based - not the ANSI row-first, one-based
+                // convention. Kept deliberately for compatibility with the
+                // pre-semantic LFBTerminal.
                 let param1 = iter.next();
                 let param2 = iter.next();
 
                 if let Some(p1) = param1
                     && let Some(p2) = param2
                 {
-                    let column = p1[0];
-                    let row = p2[0];
-                    self.position((
-                        if column > self.size.cols { self.size.cols - 1 } else { column },
-                        if row > self.size.rows { self.size.rows - 1 } else { row },
-                    ));
+                    self.position((p1[0].min(self.last_col()), p2[0].min(self.last_row())));
                 } else {
                     self.position((0, 0));
                 }
@@ -617,6 +615,19 @@ impl Perform for TerminalModel {
     }
 
     fn esc_dispatch(&mut self, _intermediates: &[u8], _ignore: bool, _byte: u8) {}
+}
+
+/// A relative movement count: an omitted or zero parameter means one step.
+fn movement_count(iter: &mut ParamsIter) -> u16 {
+    match iter.next() {
+        Some(param) if param[0] != 0 => param[0],
+        _ => 1,
+    }
+}
+
+/// An absolute coordinate, which defaults to the origin when omitted.
+fn absolute_position(iter: &mut ParamsIter) -> u16 {
+    iter.next().map_or(0, |param| param[0])
 }
 
 /// Number of columns a glyph occupies, matching `graphic::lfb::draw_char`
