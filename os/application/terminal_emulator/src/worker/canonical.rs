@@ -17,6 +17,11 @@
 
 use alloc::{format, string::String, vec::Vec};
 
+use crate::terminal::model::char_columns;
+
+/// Upper bound on the edited line, in bytes, so a single line can never
+/// outgrow the `in` pipe. Checked against the encoded length of the inserted
+/// character so the buffer is never cut mid-codepoint.
 const BUFFER_SIZE: usize = 256;
 
 /// A single canonical-mode edit request derived from a decoded key.
@@ -52,6 +57,9 @@ impl CanonicalEffect {
 }
 
 pub struct CanonicalEditor {
+    /// Cursor position as a *character* index into `buffer`. Byte offsets are
+    /// derived on demand; storing bytes here and stepping them per keystroke
+    /// lands inside multi-byte characters and panics on the next slice.
     cursor_pos: usize,
     buffer: String,
 }
@@ -69,57 +77,59 @@ impl CanonicalEditor {
             CanonicalAction::Left => {
                 if self.cursor_pos > 0 {
                     self.cursor_pos -= 1;
-                    CanonicalEffect::echo("\x1b[1D".into())
+                    let columns = self.columns_at(self.cursor_pos);
+                    CanonicalEffect::echo(move_left(columns))
                 } else {
                     CanonicalEffect::none()
                 }
             }
             CanonicalAction::Right => {
-                if self.cursor_pos < self.buffer.len() {
+                if self.cursor_pos < self.char_count() {
+                    let columns = self.columns_at(self.cursor_pos);
                     self.cursor_pos += 1;
-                    CanonicalEffect::echo("\x1b[1C".into())
+                    CanonicalEffect::echo(move_right(columns))
                 } else {
                     CanonicalEffect::none()
                 }
             }
             CanonicalAction::Home => {
-                let steps = self.cursor_pos;
+                let columns = display_columns(&self.buffer[..self.byte_offset(self.cursor_pos)]);
                 self.cursor_pos = 0;
-                if steps > 0 {
-                    CanonicalEffect::echo(format!("\x1b[{}D", steps))
-                } else {
-                    CanonicalEffect::none()
-                }
+                CanonicalEffect::echo(move_left(columns))
             }
             CanonicalAction::End => {
-                let steps = self.buffer.len() - self.cursor_pos;
-                self.cursor_pos = self.buffer.len();
-                if steps > 0 {
-                    CanonicalEffect::echo(format!("\x1b[{}C", steps))
-                } else {
-                    CanonicalEffect::none()
-                }
+                let columns = display_columns(&self.buffer[self.byte_offset(self.cursor_pos)..]);
+                self.cursor_pos = self.char_count();
+                CanonicalEffect::echo(move_right(columns))
             }
             CanonicalAction::Backspace => {
                 if self.cursor_pos > 0 {
-                    self.buffer.remove(self.cursor_pos - 1);
                     self.cursor_pos -= 1;
-                    CanonicalEffect::echo(format!("\x1B[1D \x1B[1D{}", self.redraw_tail()))
+                    let offset = self.byte_offset(self.cursor_pos);
+                    let removed = self.buffer.remove(offset);
+                    let echo = format!(
+                        "{}{}",
+                        move_left(char_columns(removed) as usize),
+                        self.redraw_tail()
+                    );
+                    CanonicalEffect::echo(echo)
                 } else {
                     CanonicalEffect::none()
                 }
             }
             CanonicalAction::Delete => {
-                if self.cursor_pos < self.buffer.len() && !self.buffer.is_empty() {
-                    self.buffer.remove(self.cursor_pos);
-                    CanonicalEffect::echo(format!(" \x1B[1D{}", self.redraw_tail()))
+                if self.cursor_pos < self.char_count() {
+                    let offset = self.byte_offset(self.cursor_pos);
+                    self.buffer.remove(offset);
+                    CanonicalEffect::echo(self.redraw_tail())
                 } else {
                     CanonicalEffect::none()
                 }
             }
             CanonicalAction::Insert(ch) => {
-                if self.buffer.len() < BUFFER_SIZE {
-                    self.buffer.insert(self.cursor_pos, ch);
+                if self.buffer.len() + ch.len_utf8() <= BUFFER_SIZE {
+                    let offset = self.byte_offset(self.cursor_pos);
+                    self.buffer.insert(offset, ch);
                     self.cursor_pos += 1;
                     CanonicalEffect::echo(format!("{}{}", ch, self.redraw_tail()))
                 } else {
@@ -127,12 +137,8 @@ impl CanonicalEditor {
                 }
             }
             CanonicalAction::Submit => {
-                let offset = self.buffer.len() - self.cursor_pos;
-                let echo = if offset > 0 {
-                    format!("\x1B[{}C\n", offset)
-                } else {
-                    "\n".into()
-                };
+                let columns = display_columns(&self.buffer[self.byte_offset(self.cursor_pos)..]);
+                let echo = format!("{}\n", move_right(columns));
                 let line = self.buffer.clone().into_bytes();
                 self.buffer.clear();
                 self.cursor_pos = 0;
@@ -145,13 +151,59 @@ impl CanonicalEditor {
     }
 
     /// Echo needed to redraw the buffer tail after the cursor when characters
-    /// are inserted or removed mid-line, leaving the cursor in place.
+    /// are inserted or removed mid-line, leaving the cursor in place. The
+    /// leading erase also clears whatever the previous, longer tail left
+    /// behind, so callers never have to blank cells themselves.
+    ///
+    /// Column arithmetic assumes the edited line occupies a single screen row;
+    /// a line long enough to wrap still echoes correctly up to the wrap point.
     fn redraw_tail(&self) -> String {
-        let content = &self.buffer[self.cursor_pos..];
-        if content.is_empty() {
-            String::new()
-        } else {
-            format!("\x1b[0K{}\x1B[{}D", content, content.len())
-        }
+        let tail = &self.buffer[self.byte_offset(self.cursor_pos)..];
+        format!("\x1b[0K{}{}", tail, move_left(display_columns(tail)))
+    }
+
+    fn char_count(&self) -> usize {
+        self.buffer.chars().count()
+    }
+
+    /// Byte offset of a character index, clamped to the end of the buffer.
+    fn byte_offset(&self, char_index: usize) -> usize {
+        self.buffer
+            .char_indices()
+            .nth(char_index)
+            .map_or(self.buffer.len(), |(offset, _)| offset)
+    }
+
+    /// Column span of the character at a character index.
+    fn columns_at(&self, char_index: usize) -> usize {
+        self.buffer
+            .chars()
+            .nth(char_index)
+            .map_or(0, |ch| char_columns(ch) as usize)
+    }
+}
+
+/// Columns the string occupies once rendered, which is not its byte length and
+/// not its character count once wide glyphs are involved.
+fn display_columns(text: &str) -> usize {
+    text.chars().map(|ch| char_columns(ch) as usize).sum()
+}
+
+/// `CUB`, or nothing at all for a zero-column move: the model reads a `0`
+/// parameter as "move by one".
+fn move_left(columns: usize) -> String {
+    if columns == 0 {
+        String::new()
+    } else {
+        format!("\x1b[{}D", columns)
+    }
+}
+
+/// `CUF`, with the same zero-column caveat as [`move_left`].
+fn move_right(columns: usize) -> String {
+    if columns == 0 {
+        String::new()
+    } else {
+        format!("\x1b[{}C", columns)
     }
 }

@@ -621,7 +621,7 @@ impl Perform for TerminalModel {
 
 /// Number of columns a glyph occupies, matching `graphic::lfb::draw_char`
 /// (`0` for glyphs Unifont cannot render, which are not printed).
-fn char_columns(c: char) -> u16 {
+pub(crate) fn char_columns(c: char) -> u16 {
     match unifont::get_glyph(c) {
         Some(glyph) => {
             let width = glyph.get_width() as u32;
