@@ -1,3 +1,4 @@
+use alloc::vec;
 use alloc::vec::Vec;
 use graphic::{
     buffered_lfb::BufferedLFB,
@@ -12,6 +13,14 @@ pub struct Character {
     pub value: char,
     pub fg_color: Color,
     pub bg_color: Color,
+}
+
+impl Character {
+    pub const BLANK: Character = Character {
+        value: '\0',
+        fg_color: color::WHITE,
+        bg_color: color::BLACK,
+    };
 }
 
 /// Framebuffer presentation state. This owns only what is needed to draw the
@@ -42,14 +51,7 @@ impl DisplayState {
         );
 
         let cell_count = size.0 as usize * size.1 as usize;
-        let mut visible = Vec::with_capacity(cell_count);
-        for _ in 0..cell_count {
-            visible.push(Character {
-                value: '\0',
-                fg_color: color::WHITE,
-                bg_color: color::BLACK,
-            });
-        }
+        let visible = vec![Character::BLANK; cell_count];
 
         lfb.lfb().clear();
         lfb.flush();

@@ -34,7 +34,11 @@ use super::color::ColorState;
 const TAB_SPACES: u16 = 4;
 
 /// Byte budget bounding a session's scrollback (excludes the live viewport).
-const SCROLLBACK_BYTE_BUDGET: usize = 256 * 1024;
+///
+/// Kept deliberately small: retired rows are recorded but nothing renders them
+/// yet, so this is dead weight multiplied by the tab count until a scrollback
+/// viewer exists. Raise it together with that viewer.
+const SCROLLBACK_BYTE_BUDGET: usize = 64 * 1024;
 
 /// Grid dimensions in character cells. `rows` is the full framebuffer row
 /// count; row 0 is reserved for the status bar (see module note).
@@ -82,6 +86,13 @@ impl Row {
             wrapped: false,
         }
     }
+
+    /// Blank an existing row in place, keeping its cell allocation.
+    fn reset(&mut self, cols: u16, color: &ColorState) {
+        self.cells.clear();
+        self.cells.resize(cols as usize, Cell::with('\0', color));
+        self.wrapped = false;
+    }
 }
 
 /// Cursor position in grid coordinates (row 0 reserved, so content rows are
@@ -107,20 +118,25 @@ impl ModelCursor {
 
 /// Summary of what a single `feed()` changed, so the active session can be
 /// repainted incrementally. `full` forces a whole-viewport repaint; otherwise
+/// `scrolled` is the number of rows the viewport moved up and
 /// `[dirty_min, dirty_max]` is the inclusive range of grid rows whose cells
-/// changed. `cursor_changed` requests a cursor-overlay refresh.
+/// changed *after* that scroll. `cursor_changed` requests a cursor-overlay
+/// refresh.
 #[derive(Copy, Clone)]
 pub struct Damage {
     pub full: bool,
+    pub scrolled: u16,
     dirty_min: Option<u16>,
     dirty_max: Option<u16>,
     pub cursor_changed: bool,
 }
 
 impl Damage {
-    const fn none() -> Self {
+    /// A feed that changed nothing.
+    pub const fn none() -> Self {
         Self {
             full: false,
+            scrolled: 0,
             dirty_min: None,
             dirty_max: None,
             cursor_changed: false,
@@ -133,6 +149,15 @@ impl Damage {
 
     fn mark_full(&mut self) {
         self.full = true;
+    }
+
+    /// Record that the viewport moved up by one row. Rows already recorded as
+    /// dirty travelled with the content, so their indices move too - otherwise
+    /// the presenter would repaint them where they used to be.
+    fn mark_scroll(&mut self) {
+        self.scrolled = self.scrolled.saturating_add(1);
+        self.dirty_min = self.dirty_min.map(|row| row.saturating_sub(1));
+        self.dirty_max = self.dirty_max.map(|row| row.saturating_sub(1));
     }
 
     fn mark_cursor(&mut self) {
@@ -155,6 +180,11 @@ impl Damage {
             (Some(min), Some(max)) => Some((min, max)),
             _ => None,
         }
+    }
+
+    /// Whether this feed changed nothing the presenter needs to redraw.
+    pub fn is_clean(&self) -> bool {
+        !self.full && self.scrolled == 0 && !self.cursor_changed && self.dirty_range().is_none()
     }
 }
 
@@ -291,26 +321,40 @@ impl TerminalModel {
         self.damage.mark_cursor();
     }
 
+    /// Move the content viewport up one row, retiring the topmost content row
+    /// into scrollback.
+    ///
+    /// Rotating the row vector moves `Row` headers rather than cell buffers, so
+    /// a scrolled line costs one memmove instead of a clone per row; the row
+    /// evicted from scrollback is recycled as the new bottom row, so a terminal
+    /// at its scrollback limit scrolls without allocating at all.
     fn scroll_up(&mut self) {
         let rows = self.size.rows as usize;
         if rows <= 1 {
             return;
         }
 
-        // The topmost content row (index 1) scrolls off into scrollback.
-        let scrolled = self.grid[1].clone();
-        self.scrollback.push_back(scrolled);
+        self.scrollback.push_back(self.grid.remove(1));
+
+        let bottom = match self.scrollback.len() > self.max_scrollback_rows {
+            true => self.scrollback.pop_front(),
+            false => None,
+        };
+        let bottom = match bottom {
+            Some(mut row) => {
+                row.reset(self.size.cols, &self.color);
+                row
+            }
+            None => Row::blank(self.size.cols, &self.color),
+        };
+        self.grid.push(bottom);
+
         while self.scrollback.len() > self.max_scrollback_rows {
             self.scrollback.pop_front();
         }
 
-        for r in 1..rows - 1 {
-            let next = self.grid[r + 1].clone();
-            self.grid[r] = next;
-        }
-        self.grid[rows - 1] = Row::blank(self.size.cols, &self.color);
-
-        self.damage.mark_full();
+        self.damage.mark_scroll();
+        self.damage.mark_row(self.size.rows - 1);
     }
 
     fn handle_tab(&mut self) {

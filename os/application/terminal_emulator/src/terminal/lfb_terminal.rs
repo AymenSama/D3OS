@@ -89,7 +89,8 @@ impl LFBTerminal {
     }
 
     /// Repaint only the rows a feed changed. `full` damage falls back to
-    /// `present_full`.
+    /// `present_full`; a feed that scrolled shifts the framebuffer instead of
+    /// redrawing every glyph on screen.
     pub fn present_damage(&self, model: &TerminalModel, damage: Damage) {
         if damage.full {
             self.present_full(model);
@@ -101,6 +102,11 @@ impl LFBTerminal {
         // Erase the previous cursor overlay before touching content.
         Self::restore_cursor_cell(&mut display);
 
+        let scrolled = damage.scrolled > 0;
+        if scrolled {
+            Self::scroll_presented(&mut display, damage.scrolled);
+        }
+
         if let Some((min, max)) = damage.dirty_range() {
             let start = min.max(1);
             let last = max.min(display.size.1.saturating_sub(1));
@@ -108,14 +114,48 @@ impl LFBTerminal {
                 for r in start..=last {
                     Self::present_row(&mut display, model, r);
                 }
-                let y = start as u32 * lfb::DEFAULT_CHAR_HEIGHT;
-                let h = (last - start + 1) as u32 * lfb::DEFAULT_CHAR_HEIGHT;
-                display.lfb.flush_lines(y, h);
+                if !scrolled {
+                    let y = start as u32 * lfb::DEFAULT_CHAR_HEIGHT;
+                    let h = (last - start + 1) as u32 * lfb::DEFAULT_CHAR_HEIGHT;
+                    display.lfb.flush_lines(y, h);
+                }
             }
+        }
+
+        if scrolled {
+            // The scroll dragged content through the status row, and every
+            // remaining line moved, so the whole surface has to go out.
+            Self::draw_status_bar(&mut display);
+            display.lfb.flush();
         }
 
         display.cursor_pos = (model.cursor.col, model.cursor.row);
         display.cursor_visible = false;
+    }
+
+    /// Move the presented image up by `rows` character rows, matching the
+    /// model's own scroll. Only the rows the scroll exposed still need to be
+    /// drawn from the model, which is the whole point of doing it this way.
+    fn scroll_presented(display: &mut DisplayState, rows: u16) {
+        let shift = rows.min(display.size.1);
+        if shift == 0 {
+            return;
+        }
+
+        display
+            .lfb
+            .lfb()
+            .scroll_up(shift as u32 * lfb::DEFAULT_CHAR_HEIGHT);
+
+        // Keep the presented-cell snapshot in step, so the cursor overlay
+        // restores the character that is actually on screen.
+        let stride = display.size.0 as usize;
+        let moved = shift as usize * stride;
+        if moved < display.visible.len() {
+            display.visible.copy_within(moved.., 0);
+        }
+        let tail = display.visible.len().saturating_sub(moved);
+        display.visible[tail..].fill(Character::BLANK);
     }
 
     /// Draw one content row of `model` into the buffered framebuffer and update
