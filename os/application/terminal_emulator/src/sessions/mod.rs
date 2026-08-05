@@ -20,6 +20,8 @@
    ╚═════════════════════════════════════════════════════════════════════════╝
 */
 
+pub(crate) mod screen;
+
 use alloc::collections::btree_map::BTreeMap;
 use alloc::rc::Rc;
 
@@ -27,10 +29,11 @@ use naming::shared_types::OpenOptions;
 use terminal_lib::manager;
 use terminal_lib::session::{read_ctl, CtlRecord, Session, WaitState};
 
-use crate::terminal::ansi::SemanticTerminal;
 use crate::terminal::lfb_terminal::LFBTerminal;
 use crate::util::banner::create_banner_string;
-use crate::worker::canonical::{CanonicalAction, CanonicalEditor};
+use crate::worker::canonical::CanonicalAction;
+
+use screen::SessionScreen;
 
 /// Bytes drained from a session `out` pipe per loop iteration.
 const OUT_READ_CHUNK: usize = 256;
@@ -38,32 +41,6 @@ const OUT_READ_CHUNK: usize = 256;
 /// Sentinel "no active session selected yet" so the first manager `ctl` poll
 /// always triggers an initial render.
 const NO_ACTIVE: u8 = u8::MAX;
-
-/// Per-session emulator state.
-struct SessionScreen {
-    /// Non-blocking reader on the session `out` FIFO (app stdout).
-    out: Option<usize>,
-    /// Reader on the session `ctl` record (foreground mode/wait state).
-    ctl: Option<usize>,
-    /// Lazily-opened writer on the session `in` FIFO (app stdin).
-    in_writer: Option<usize>,
-    /// Semantic screen state: parser + grid + cursor + colors + scrollback.
-    terminal: SemanticTerminal,
-    /// Canonical-mode line editor for this session.
-    canonical: CanonicalEditor,
-}
-
-impl SessionScreen {
-    fn new(terminal: SemanticTerminal) -> Self {
-        Self {
-            out: None,
-            ctl: None,
-            in_writer: None,
-            terminal,
-            canonical: CanonicalEditor::new(),
-        }
-    }
-}
 
 pub struct SessionMux {
     terminal: Rc<LFBTerminal>,
@@ -171,9 +148,9 @@ impl SessionMux {
             if read == 0 {
                 continue;
             }
-            let damage = screen.terminal.feed(&buffer[0..read]);
+            let damage = screen.feed(&buffer[0..read]);
             if *id == active {
-                terminal.present_damage(screen.terminal.model(), damage);
+                terminal.present_damage(screen.model(), damage);
             }
         }
     }
@@ -228,12 +205,11 @@ impl SessionMux {
             let Some(screen) = self.sessions.get_mut(&active) else {
                 return;
             };
-            let effect = screen.canonical.apply(action);
-            if !effect.echo.is_empty() {
-                let damage = screen.terminal.feed(effect.echo.as_bytes());
-                terminal.present_damage(screen.terminal.model(), damage);
+            let (damage, submit) = screen.edit(action);
+            if !damage.is_clean() {
+                terminal.present_damage(screen.model(), damage);
             }
-            effect.submit
+            submit
         };
 
         if let Some(bytes) = submit {
@@ -251,7 +227,7 @@ impl SessionMux {
     /// Repaint the active session's full viewport (used after GUI mode returns).
     pub fn present_active(&self) {
         if let Some(screen) = self.sessions.get(&self.active) {
-            self.terminal.present_full(screen.terminal.model());
+            self.terminal.present_full(screen.model());
         }
     }
 
@@ -259,7 +235,7 @@ impl SessionMux {
         if self.sessions.contains_key(&id) {
             return;
         }
-        let mut screen = SessionScreen::new(SemanticTerminal::new(self.terminal.screen_size()));
+        let mut screen = SessionScreen::new(self.terminal.screen_size());
         let session = Session::with_id(id as usize);
         screen.out = naming::open(
             &session.out_path(),
@@ -269,7 +245,7 @@ impl SessionMux {
         screen.ctl = naming::open(&session.ctl_path(), OpenOptions::READWRITE).ok();
         // Seed the banner so each tab shows it (survives tab switches via the
         // semantic model, not a byte replay ring).
-        let _ = screen.terminal.feed(create_banner_string().as_bytes());
+        let _ = screen.feed(create_banner_string().as_bytes());
         self.sessions.insert(id, screen);
 
         self.publish_tabs();
@@ -291,6 +267,14 @@ impl SessionMux {
                 let _ = naming::close(handle);
             }
         }
+
+        // Don't keep pointing at a session that is gone: input and repaints
+        // would silently go nowhere until the manager published a new active
+        // id. Dropping to the sentinel makes the next `ctl` poll re-select.
+        if self.active == id {
+            self.active = NO_ACTIVE;
+        }
+
         self.publish_tabs();
     }
 
