@@ -106,6 +106,8 @@ pub struct Thread {
     entry: extern "sysv64" fn(),
     state: AtomicU8,
     wake_pending: AtomicBool, // false => allowed to block; true => do NOT block (wake pending)
+    /// Cooperative kill: the thread must run `exit` itself so syscall locks are dropped.
+    kill_requested: AtomicBool,
     xsave_state: XSaveState
 }
 
@@ -158,6 +160,7 @@ impl Thread {
             entry,
             state: AtomicU8::new(ThreadState::Created.as_u8()),
             wake_pending: AtomicBool::new(false),
+            kill_requested: AtomicBool::new(false),
             xsave_state: XSaveState::new()
         };
 
@@ -237,6 +240,7 @@ impl Thread {
             entry,
             state: AtomicU8::new(ThreadState::Created.as_u8()),
             wake_pending: AtomicBool::new(false),
+            kill_requested: AtomicBool::new(false),
             xsave_state: XSaveState::new()
         };
 
@@ -610,6 +614,14 @@ impl Thread {
 
     pub fn set_wake_pending(&self) {
         self.wake_pending.store(true, Ordering::Release);
+    }
+
+    pub fn request_kill(&self) {
+        self.kill_requested.store(true, Ordering::Release);
+    }
+
+    pub fn is_kill_requested(&self) -> bool {
+        self.kill_requested.load(Ordering::Acquire)
     }
 
     /// Returns true if calling thread should actually block.

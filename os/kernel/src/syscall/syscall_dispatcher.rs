@@ -18,6 +18,7 @@ use log::info;
 use x86_64::registers::rflags::RFlags;
 
 use super::sys_concurrent::{
+    check_killed_on_syscall_return,
     sys_process_count, sys_process_execute_binary, sys_process_exit,
     sys_process_id, sys_thread_count, sys_process_status, 
     sys_thread_create, sys_thread_exit, sys_thread_id, sys_thread_join, 
@@ -187,6 +188,12 @@ unsafe extern "sysv64" fn syscall_handler() {
 
     // Call system call handler, corresponding to ID (in rax)
     "call [{SYSCALL_TABLE} + 8 * rax]",
+    // Cooperative kill: finish the syscall (locks dropped) then exit if asked.
+    "push rax",
+    "push rdx",
+    "call {CHECK_KILLED}",
+    "pop rdx",
+    "pop rax",
 
     // Restore registers
     "pop r11", // Pop the alignment 0
@@ -210,7 +217,8 @@ unsafe extern "sysv64" fn syscall_handler() {
     NUM_SYSCALLS = const NUM_SYSCALLS,
     CORE_LOCAL_STORAGE_TSS_RSP0_PTR_INDEX = const CORE_LOCAL_STORAGE_TSS_RSP0_PTR_INDEX,
     CORE_LOCAL_STORAGE_USER_RSP_INDEX = const CORE_LOCAL_STORAGE_USER_RSP_INDEX,
-    SYSCALL_TABLE = sym SYSCALL_TABLE
+    SYSCALL_TABLE = sym SYSCALL_TABLE,
+    CHECK_KILLED = sym check_killed_on_syscall_return
     );
 }
 

@@ -77,6 +77,11 @@ pub extern "sysv64" fn sys_thread_kill(id: usize) -> isize {
     0
 }
 
+#[unsafe(no_mangle)]
+pub extern "sysv64" fn check_killed_on_syscall_return() {
+    scheduler().exit_if_killed();
+}
+
 pub extern "sysv64" fn sys_thread_exit() -> ! {
     scheduler().exit();
 }

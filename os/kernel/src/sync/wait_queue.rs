@@ -48,6 +48,7 @@ impl WaitQueue {
             // predicate is re-evaluated under the scheduler lock, which is
             // serialized against `unblock()`, so a wakeup can never be lost.
             scheduler().block_if_parking(|| !pred());
+            scheduler().exit_if_killed();
 
             // Drop our registration if a notify has not already removed it (e.g.
             // when `block_if_parking` returned without blocking due to a race).

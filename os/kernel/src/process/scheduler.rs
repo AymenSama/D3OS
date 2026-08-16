@@ -410,6 +410,22 @@ impl Scheduler {
         unreachable!()
     }
 
+    /// If the current thread was asked to die, run process/thread exit on this
+    /// stack so syscall locks are released first. Never returns when killed.
+    pub fn exit_if_killed(&self) {
+        let Some(thread) = self.try_current_thread() else {
+            return;
+        };
+        if !thread.is_kill_requested() {
+            return;
+        }
+        if !thread.is_kernel_thread() {
+            thread.process().exit();
+        }
+        drop(thread);
+        self.exit();
+    }
+
     /// Kill the thread with the id `thread_id`, if it is on the same Core
     pub fn kill(&self, thread_id: usize) {
         let mut ready_state = self.get_ready_state();
@@ -428,55 +444,59 @@ impl Scheduler {
     /// Kill the thread with the id `thread_id`, if it is on the same Core
     /// goes through ready_queue, sleep_list, blocked_list, and join_map in this order
     /// returns true if a thread with the given id was found
+    /// Cooperative kill: set a flag so the target exits on its own stack.
+    /// Ready/current threads are left queued (they may hold syscall locks).
+    /// Sleeping/blocked/join waiters are moved to ready so they can observe the flag.
     fn kill_locally(&self, thread_id: usize, state: &mut ReadyState) -> bool {
-        if is_thread_alive(thread_id) == false { return true; }
-        let mut changed = false;
-
-        // check ready_queue
-        let mut before = state.ready_queue.len();
-        state.ready_queue.retain(|thread| thread.id() != thread_id);
-        let mut after = state.ready_queue.len();
-        if before != after {
-            changed = true;
+        if is_thread_alive(thread_id) == false {
+            return true;
         }
-        if !changed {
-            {   // check sleep_list
-                let mut sleep_list = self.sleep_list.lock();
-                before = sleep_list.len();
-                sleep_list.retain(|(thread, _)| thread.id() != thread_id);
-                after = state.ready_queue.len() + sleep_list.len();
+        // Check if the current thread is the target thread
+        if state.current_thread.as_ref().is_some_and(|t| t.id() == thread_id) {
+            state.current_thread.as_ref().unwrap().request_kill();
+            return true;
+        }
+        // Check ready queue
+        if let Some(thread) = state.ready_queue.iter().find(|t| t.id() == thread_id).cloned() {
+            thread.request_kill();
+            return true;
+        }
+        // Check sleep list
+        {
+            let mut sleep_list = self.sleep_list.lock();
+            if let Some(pos) = sleep_list.iter().position(|(t, _)| t.id() == thread_id) {
+                let (thread, _) = sleep_list.remove(pos);
+                thread.request_kill();
+                state.ready_queue.push_front(thread);
+                inc_rq_len();
+                return true;
             }
-            if before != after {
-                changed = true;
+        }
+        // Check blocked list
+        {
+            let mut blocked_list = self.blocked_list.lock();
+            if let Some(pos) = blocked_list.iter().position(|t| t.id() == thread_id) {
+                let thread = blocked_list.remove(pos);
+                thread.request_kill();
+                state.ready_queue.push_front(thread);
+                inc_rq_len();
+                return true;
             }
-            if!changed {
-                {   // check Block List
-                    let mut blocked_list = self.blocked_list.lock();
-                    let before = blocked_list.len();
-                    blocked_list.retain(|t| t.id() != thread_id);
-                    if blocked_list.len() != before {
-                        changed = true;
-                    }
+        }
+        // Check join map
+        {
+            let mut join_map = self.join_map.lock();
+            for (_target, wait_list) in join_map.iter_mut() {
+                if let Some(pos) = wait_list.iter().position(|t| t.id() == thread_id) {
+                    let thread = wait_list.remove(pos);
+                    thread.request_kill();
+                    state.ready_queue.push_front(thread);
+                    inc_rq_len();
+                    return true;
                 }
-                if !changed {
-                    // check all join_map's
-                    let mut join_map = self.join_map.lock();
-                    for (_target, wait_list) in join_map.iter_mut() {
-                        let before = wait_list.len();
-                        wait_list.retain(|t| t.id() != thread_id);
-                        if wait_list.len() != before {
-                            changed = true;
-                        }
-                    }
-                }
             }
         }
-        if changed {
-            mark_thread_dead(thread_id);
-            self.unjoin(thread_id, state);
-            dec_rq_len();
-        }
-        changed
+        false
     }
 
     /// Gives out current thread id, then calls other debug methods
@@ -990,12 +1010,6 @@ impl Scheduler {
             // if you have this thread, kill it
             MessageCmd::Kill { tid } => {
                 if is_thread_alive(tid) == false { return; }
-                let thread = state.current_thread.as_ref().expect("Trying to kill current thread before initialization!");
-                if thread.id() == tid { //cant kill itself, reschedule for other thread
-                    let _ = schedule_on(current_core_id() as usize, MessageItem::Cmd(MessageCmd::Kill { tid }));
-                    let _ = schedule_on_all_others(MessageItem::Cmd(MessageCmd::Kill { tid }));    //if target migrates until then
-                    return;
-                }
                 self.kill_locally(tid, state);
             }
         }
