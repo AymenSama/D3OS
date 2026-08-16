@@ -15,10 +15,12 @@ use core::result::Result;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::Once;
 use spin::rwlock::RwLock;
-use log::info;
+use log::{info, warn};
+use uuid::Uuid;
 
 use super::lookup;
 use super::traits::NamedObject;
+use crate::process::core_local_storage::scheduler;
 use naming::shared_types::{DirEntry, OpenOptions, SeekOrigin};
 use syscall::return_vals::{Errno, SyscallResult};
 
@@ -69,7 +71,7 @@ pub(super) fn open(path: &str, flags: OpenOptions) -> Result<usize, Errno> {
     };
 
     // try to allocate an new handle
-    let result = get_open_object_table().allocate_handle(Arc::new(OpenedObject::new(Arc::new(found_named_object), AtomicUsize::new(0), flags)));
+    let result = get_open_object_table().allocate_handle(Arc::new(OpenedObject::new(Arc::new(found_named_object), AtomicUsize::new(0), flags, current_owner())));
 
     if result.is_err() {
         if let Some(pipe) = opened_pipe {
@@ -81,7 +83,7 @@ pub(super) fn open(path: &str, flags: OpenOptions) -> Result<usize, Errno> {
 }
 
 pub(super) fn write(fh: usize, buf: &[u8]) -> Result<usize, Errno> {
-    get_open_object_table().lookup_opened_object(fh).and_then(|opened_object| {
+    get_open_object_table().lookup_owned(fh, current_owner()).and_then(|opened_object| {
         if opened_object.named_object.is_file() {
             // Make `opened_object` mutable here
             return opened_object.named_object.as_file().and_then(|file| {
@@ -108,7 +110,7 @@ pub(super) fn write(fh: usize, buf: &[u8]) -> Result<usize, Errno> {
 }
 
 pub(super) fn read(fh: usize, buf: &mut [u8]) -> Result<usize, Errno> {
-    get_open_object_table().lookup_opened_object(fh).and_then(|opened_object| {
+    get_open_object_table().lookup_owned(fh, current_owner()).and_then(|opened_object| {
         if opened_object.named_object.is_file() {
             // Make `opened_object` mutable here
             return opened_object.named_object.as_file().and_then(|file| {
@@ -135,7 +137,7 @@ pub(super) fn read(fh: usize, buf: &mut [u8]) -> Result<usize, Errno> {
 }
 
 pub fn seek(fh: usize, offset: isize, origin: SeekOrigin) -> Result<usize, Errno> {
-    get_open_object_table().lookup_opened_object(fh).and_then(|opened_object| {
+    get_open_object_table().lookup_owned(fh, current_owner()).and_then(|opened_object| {
         if opened_object.named_object.is_file() {
             // Make `opened_object` mutable here
             return opened_object.named_object.as_file().and_then(|file| {
@@ -153,7 +155,7 @@ pub fn seek(fh: usize, offset: isize, origin: SeekOrigin) -> Result<usize, Errno
 }
 
 pub(super) fn readdir(fh: usize) -> Result<Option<DirEntry>, Errno> {
-    get_open_object_table().lookup_opened_object(fh).and_then(|opened_object| {
+    get_open_object_table().lookup_owned(fh, current_owner()).and_then(|opened_object| {
         if opened_object.named_object.is_dir() {
             // Make `opened_object` mutable here
             return opened_object.named_object.as_dir().and_then(|dir| {
@@ -169,11 +171,13 @@ pub(super) fn readdir(fh: usize) -> Result<Option<DirEntry>, Errno> {
 
 pub(super) fn close(fh: usize) -> Result<usize, Errno> {
     info!("open_object::close: close called for fh={}", fh);
-    if let Ok(opened_object) = get_open_object_table().lookup_opened_object(fh) {
-        if opened_object.named_object.is_pipe() {
-            if let Ok(pipe) = opened_object.named_object.as_pipe() {
-                pipe.close(opened_object.options);
-            }
+
+    // Reject foreign handles before touching the pipe or freeing the slot, so a
+    // process cannot close another process's handle.
+    let opened_object = get_open_object_table().lookup_owned(fh, current_owner())?;
+    if opened_object.named_object.is_pipe() {
+        if let Ok(pipe) = opened_object.named_object.as_pipe() {
+            pipe.close(opened_object.options);
         }
     }
 
@@ -204,6 +208,19 @@ impl OpenObjectTable {
             .and_then(|(_, obj)| obj.as_ref())
             .cloned()
             .ok_or(Errno::EINVALH)
+    }
+
+    /// Lookup an 'OpenedObject' for a given handle, rejecting access by any
+    /// process other than the one that opened it. A foreign handle is reported
+    /// as `EINVALH` (the same code as a nonexistent handle) so ownership is not
+    /// disclosed across processes.
+    fn lookup_owned(&self, handle: usize, owner: Uuid) -> Result<Arc<OpenedObject>, Errno> {
+        let opened_object = self.lookup_opened_object(handle)?;
+        if opened_object.owner != owner {
+            warn!("open_object: process {} tried to access foreign handle {}", owner, handle);
+            return Err(Errno::EINVALH);
+        }
+        Ok(opened_object)
     }
 
     /// Allocate a new handle for a given 'OpenObject'
@@ -265,15 +282,30 @@ fn get_open_object_table() -> Arc<OpenObjectTable> {
 /// ************************ OpenedObject ************************
 
 // Opened object stored in the 'OpenObjectTable'
-// (includes NamedObject, current position within object, and options)
+// (includes NamedObject, current position within object, options, and the id
+//  of the process that opened it)
 pub struct OpenedObject {
     named_object: Arc<NamedObject>,
     pos: AtomicUsize, // current position within file or number of next DirEntry
     options: OpenOptions,
+    owner: Uuid, // id of the process that opened this object
 }
 
 impl OpenedObject {
-    pub fn new(named_object: Arc<NamedObject>, pos: AtomicUsize, options: OpenOptions) -> OpenedObject {
-        OpenedObject { named_object, pos, options }
+    pub fn new(named_object: Arc<NamedObject>, pos: AtomicUsize, options: OpenOptions, owner: Uuid) -> OpenedObject {
+        OpenedObject { named_object, pos, options, owner }
     }
+}
+
+/// Return the id of the process that owns the current thread.
+///
+/// Uses `try_current_thread` because the naming service is initialized at boot
+/// before the scheduler has a current thread. `Uuid::nil()` is the kernel
+/// process id (see `Process::new_kernel`), so kernel- and boot-time opens are
+/// owned by the kernel process, which never exits and is never reclaimed.
+fn current_owner() -> Uuid {
+    scheduler()
+        .try_current_thread()
+        .map(|thread| thread.process().id())
+        .unwrap_or_else(Uuid::nil)
 }
