@@ -137,6 +137,10 @@ impl ProcessManager {
 
         self.active_processes.swap_remove(index);
         self.exited_processes.push(process);
+
+        // After sibling threads are gone, before this thread exits: Pipe::close
+        // needs a live caller, and nothing should open handles behind the sweep.
+        crate::naming::api::close_handles_for_process(process_id);
     }
 
     /// Kill a process by its id
@@ -154,6 +158,9 @@ impl ProcessManager {
 
         self.active_processes.swap_remove(index);
         self.exited_processes.push(process);
+
+        // See `exit` for why this is last.
+        crate::naming::api::close_handles_for_process(process_id);
     }
 
     /// 

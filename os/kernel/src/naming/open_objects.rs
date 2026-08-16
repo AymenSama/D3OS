@@ -184,6 +184,31 @@ pub(super) fn close(fh: usize) -> Result<usize, Errno> {
     get_open_object_table().free_handle(fh)
 }
 
+/// Reclaim every handle owned by `owner`, restoring pipe endpoint counts.
+///
+/// Two phases: `drain_owned` removes all owned entries under the table locks and
+/// returns them, then pipe endpoints are closed *without* holding those locks.
+/// `Pipe::close` wakes waiters via the scheduler, so holding the global table
+/// write lock across it would stall `open`/`read` on other cores. Draining first
+/// also makes the sweep atomic against a concurrent `close(fh)` from a dying
+/// sibling: whichever side removes the entry owns the `pipe.close`, so an
+/// endpoint counter cannot be decremented twice.
+pub(super) fn close_all_for_process(owner: Uuid) -> usize {
+    let victims = get_open_object_table().drain_owned(owner);
+    for opened_object in &victims {
+        if opened_object.named_object.is_pipe() {
+            if let Ok(pipe) = opened_object.named_object.as_pipe() {
+                pipe.close(opened_object.options);
+            }
+        }
+    }
+    let reclaimed = victims.len();
+    if reclaimed > 0 {
+        info!("naming: reclaimed {} handles for pid {}", reclaimed, owner);
+    }
+    reclaimed
+}
+
 /*pub(super) fn dump() {
     get_open_object_table().lock().dump();
 }*/
@@ -245,6 +270,28 @@ impl OpenObjectTable {
         } else {
             Err(Errno::EINVALH)
         }
+    }
+
+    /// Remove and return every entry owned by `owner`, freeing each handle slot.
+    ///
+    /// Pipe endpoints are *not* closed
+    /// here (see `close_all_for_process`); this only touches the table.
+    fn drain_owned(&self, owner: Uuid) -> Vec<Arc<OpenedObject>> {
+        let mut guard = self.open_handles.write();
+        let mut free = self.free_handles.write();
+
+        let mut victims = Vec::new();
+        guard.retain(|(handle, obj)| {
+            let owned = obj.as_ref().is_some_and(|obj| obj.owner == owner);
+            if owned {
+                free[*handle] = 0;
+                if let Some(obj) = obj {
+                    victims.push(obj.clone());
+                }
+            }
+            !owned
+        });
+        victims
     }
 
     /// Helper function of 'allocate' to find a free handle
