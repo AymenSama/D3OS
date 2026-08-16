@@ -23,7 +23,11 @@ use crate::process::process_stats::ProcStat;
 
 pub struct ProcessManager {
     active_processes: Vec<Arc<Process>>,
-    exited_processes: Vec<Arc<Process>>, // processed by cleanup thread later
+    /// Processes that have exited but whose last thread may still be in
+    /// `scheduler.exit()` / `Thread::switch`. Dropped on the *next* cleanup pass.
+    exited_processes: Vec<Arc<Process>>,
+    /// Staged from `exited_processes` last cleanup cycle; safe to drop now.
+    graveyard: Vec<Arc<Process>>,
 }
 
 impl ProcessManager {
@@ -31,6 +35,7 @@ impl ProcessManager {
         Self {
             active_processes: Vec::new(),
             exited_processes: Vec::new(),
+            graveyard: Vec::new(),
         }
     }
 
@@ -163,9 +168,16 @@ impl ProcessManager {
         crate::naming::api::close_handles_for_process(process_id);
     }
 
-    /// 
+    /// Drop processes that exited at least one cleanup cycle ago.
+    ///
+    /// The last thread of a process cannot unmap its own address space: its
+    /// kernel stack lives in that space, and `Thread::switch` still runs there
+    /// after `ProcessManager::exit` returns. If cleanup was blocked on this
+    /// write lock during exit, a one-cycle delay keeps the `Arc<Process>` alive
+    /// across that switch. Dropping immediately is a triple-fault/reset.
     pub fn drop_exited_process(&mut self) {
-        self.exited_processes.clear();
+        self.graveyard.clear();
+        core::mem::swap(&mut self.graveyard, &mut self.exited_processes);
     }
 
     /// Dump all active processes
