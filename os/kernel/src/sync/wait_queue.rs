@@ -88,7 +88,6 @@ impl WaitQueue {
         
         let mut unblocked_success_idxs = Vec::new();
 
-        // check queue until one thread is successfully unblocked
         for (idx, (pid, tid)) in guard.iter().enumerate() {
             if scheduler().unblock(*pid, *tid) {
                 unblocked_success_idxs.push(idx);
@@ -97,8 +96,10 @@ impl WaitQueue {
 
         let mut woke = 0;
 
-        for idx in unblocked_success_idxs {
-            if guard.remove(idx as usize).is_some() {
+        // Remove highest indices first: VecDeque::remove shifts later entries
+        // down, so ascending removal would hit the wrong slots (or skip them).
+        for idx in unblocked_success_idxs.into_iter().rev() {
+            if guard.remove(idx).is_some() {
                 woke += 1;
             }
         }
