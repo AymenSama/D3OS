@@ -4,19 +4,19 @@
    ║ Descr.: Coordination protocol between the standalone `session_manager`  ║
    ║         and the `terminal_emulator`, built on `naming`.                 ║
    ║                                                                         ║
-   ║ The manager owns a small namespace `/term/manager/` holding three       ║
+   ║ The manager owns a small namespace `/term/manager/` holding two         ║
    ║ objects:                                                                ║
    ║   - `ctl`   : a fixed-layout tmpfs control record (pollable state):     ║
-   ║               the active session id, live session count, generation.    ║
+   ║               the active session id, generation, and a 256-bit live     ║
+   ║               session mask (the authoritative membership snapshot).     ║
    ║   - `cmd`   : a FIFO carrying one-shot UI commands emulator -> manager  ║
    ║               (new/close/next/prev tab).                                ║
-   ║   - `event` : a FIFO carrying one-shot notifications manager -> emulator║
-   ║               (session created/destroyed).                              ║
    ║                                                                         ║
-   ║ Pollable state (which session is active) lives on the `ctl` record so   ║
-   ║ the emulator can read it repeatedly without consuming it. One-shot      ║
-   ║ transitions (a tab was created/destroyed, the user pressed a tab key)   ║
-   ║ travel on the FIFOs so they are consumed exactly once.                  ║
+   ║ Membership is current state, not a stream: the full live set travels    ║
+   ║ on the `ctl` record so the emulator can poll it repeatedly and diff it  ║
+   ║ against its local map without consuming anything. Only one-shot UI      ║
+   ║ commands (the user pressed a tab key) travel on the `cmd` FIFO so they  ║
+   ║ are consumed exactly once.                                              ║
    ╟─────────────────────────────────────────────────────────────────────────╢
    ║ Author: Aymen Sellami                                                   ║
    ╚═════════════════════════════════════════════════════════════════════════╝
@@ -24,6 +24,7 @@
 
 use alloc::format;
 use alloc::string::String;
+use alloc::vec::Vec;
 
 use naming::shared_types::SeekOrigin;
 use syscall::return_vals::Errno;
@@ -46,37 +47,37 @@ pub mod cmd {
     pub const PREV_TAB: u8 = 4;
 }
 
-/// One-shot notifications sent manager -> emulator on the `event` FIFO, encoded
-/// as a 2-byte frame `[opcode, id]`.
-pub mod event {
-    /// A session with the given id was created; the emulator should open its
-    /// endpoints and allocate a screen buffer.
-    pub const CREATED: u8 = 1;
-    /// A session with the given id was destroyed; the emulator should close its
-    /// endpoints and drop the screen buffer.
-    pub const DESTROYED: u8 = 2;
-}
+/// Number of bytes in the live-session mask: one bit per possible `u8` session
+/// id, so the whole never-reuse id space (256 ids) is representable (even if it has holes).
+pub const LIVE_MASK_BYTES: usize = 32;
 
 /// Size of the fixed-layout manager control record. Always read/written in full
 /// at offset 0, like the per-session `ctl` record.
-pub const MANAGER_CTL_SIZE: usize = 16;
+pub const MANAGER_CTL_SIZE: usize = 40;
 
 /// Current manager control-record version. `0` means "not published yet".
-pub const MANAGER_CTL_VERSION: u8 = 1;
+pub const MANAGER_CTL_VERSION: u8 = 2;
 
 const OFF_VERSION: usize = 0;
 const OFF_ACTIVE: usize = 1; // active session id (u8)
 const OFF_COUNT: usize = 2; // live session count (u8)
 const OFF_GENERATION: usize = 3; // bumped on every change (u8)
-// bytes 4..16 reserved
+const OFF_MASK: usize = 4; // bytes 4-35: 256-bit live session mask (LIVE_MASK_BYTES bytes)
+// bytes 36..40 reserved
 
-/// The pollable manager control record.
+/// The pollable manager control record: the authoritative membership snapshot.
+///
+/// `live_mask` is the source of truth for which sessions exist. Bit `id` is byte
+/// `id / 8`, bit `id % 8` (LSB-first); a set bit means id `id` is live. Because
+/// the bit index *is* the id, the snapshot represents a set with holes and the
+/// protocol maximum is the full `u8` id space.
 #[derive(Debug, Clone, Copy)]
 pub struct ManagerCtl {
     version: u8,
     pub active_id: u8,
     pub session_count: u8,
     pub generation: u8,
+    live_mask: [u8; LIVE_MASK_BYTES],
 }
 
 impl ManagerCtl {
@@ -87,16 +88,19 @@ impl ManagerCtl {
             active_id: 0,
             session_count: 0,
             generation: 0,
+            live_mask: [0u8; LIVE_MASK_BYTES],
         }
     }
 
-    /// A published record describing the current active session and counters.
-    pub fn new(active_id: u8, session_count: u8, generation: u8) -> Self {
+    /// A published record describing the current active session, counters, and
+    /// live-session mask.
+    pub fn new(active_id: u8, session_count: u8, generation: u8, live_mask: [u8; LIVE_MASK_BYTES]) -> Self {
         Self {
             version: MANAGER_CTL_VERSION,
             active_id,
             session_count,
             generation,
+            live_mask,
         }
     }
 
@@ -105,12 +109,29 @@ impl ManagerCtl {
         self.version != 0
     }
 
+    /// `true` if session `id` is set in the live mask.
+    pub fn is_live(&self, id: u8) -> bool {
+        (self.live_mask[(id / 8) as usize] >> (id % 8)) & 1 != 0
+    }
+
+    /// The live session ids in ascending order, decoded from the mask.
+    pub fn live_ids(&self) -> Vec<u8> {
+        let mut ids = Vec::new();
+        for id in 0u8..=255 {
+            if self.is_live(id) {
+                ids.push(id);
+            }
+        }
+        ids
+    }
+
     fn encode(&self) -> [u8; MANAGER_CTL_SIZE] {
         let mut buf = [0u8; MANAGER_CTL_SIZE];
         buf[OFF_VERSION] = self.version;
         buf[OFF_ACTIVE] = self.active_id;
         buf[OFF_COUNT] = self.session_count;
         buf[OFF_GENERATION] = self.generation;
+        buf[OFF_MASK..OFF_MASK + LIVE_MASK_BYTES].copy_from_slice(&self.live_mask);
         buf
     }
 
@@ -118,13 +139,25 @@ impl ManagerCtl {
         if buf.len() < MANAGER_CTL_SIZE || buf[OFF_VERSION] == 0 {
             return Self::empty();
         }
+        let mut live_mask = [0u8; LIVE_MASK_BYTES];
+        live_mask.copy_from_slice(&buf[OFF_MASK..OFF_MASK + LIVE_MASK_BYTES]);
         Self {
             version: buf[OFF_VERSION],
             active_id: buf[OFF_ACTIVE],
             session_count: buf[OFF_COUNT],
             generation: buf[OFF_GENERATION],
+            live_mask,
         }
     }
+}
+
+/// Build a live-session mask from an iterator of live ids (bit `id` set).
+pub fn live_mask_from_ids<I: IntoIterator<Item = u8>>(ids: I) -> [u8; LIVE_MASK_BYTES] {
+    let mut mask = [0u8; LIVE_MASK_BYTES];
+    for id in ids {
+        mask[(id / 8) as usize] |= 1 << (id % 8);
+    }
+    mask
 }
 
 pub fn ctl_path() -> String {
@@ -135,11 +168,7 @@ pub fn cmd_path() -> String {
     format!("{}/cmd", MANAGER_ROOT)
 }
 
-pub fn event_path() -> String {
-    format!("{}/event", MANAGER_ROOT)
-}
-
-/// Create the manager namespace and its three objects.
+/// Create the manager namespace and its objects.
 ///
 /// Best-effort and intended to be called once by the manager at startup. Errors
 /// on already-existing components are ignored so a restart does not fail.
@@ -148,7 +177,6 @@ pub fn create_namespace() {
     let _ = naming::mkdir(MANAGER_ROOT);
     let _ = naming::touch(&ctl_path());
     let _ = naming::mkfifo(&cmd_path());
-    let _ = naming::mkfifo(&event_path());
 }
 
 /// Read the full manager control record from an open `ctl` handle (offset is

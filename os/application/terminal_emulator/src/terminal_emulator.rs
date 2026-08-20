@@ -84,8 +84,7 @@ impl TerminalEmulator {
             self.handle_events();
             {
                 let mut mux = self.mux.borrow_mut();
-                mux.poll_events();
-                mux.poll_active();
+                mux.poll_snapshot();
                 mux.drain_outputs();
             }
             self.input_observer.run();

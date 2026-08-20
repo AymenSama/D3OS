@@ -12,9 +12,11 @@
    ║ session's damage to the framebuffer. Switching tabs presents the target   ║
    ║ session's semantic viewport in one repaint - no history is replayed.     ║
    ║                                                                         ║
-   ║ It also speaks the manager protocol: it consumes `created`/`destroyed`  ║
-   ║ events, polls the active session id from the manager `ctl` record, and  ║
-   ║ forwards UI commands (new/close/next/prev tab) on the `cmd` FIFO.       ║
+   ║ It also speaks the manager protocol: each loop it polls the manager      ║
+   ║ `ctl` record (an authoritative live-session snapshot: active id +        ║
+   ║ generation + 256-bit live mask), diffs that set against its local map    ║
+   ║ to open/close endpoints, applies the active id, and forwards UI          ║
+   ║ commands (new/close/next/prev tab) on the `cmd` FIFO.                   ║
    ╟─────────────────────────────────────────────────────────────────────────╢
    ║ Author: Aymen Sellami                                                   ║
    ╚═════════════════════════════════════════════════════════════════════════╝
@@ -44,14 +46,15 @@ const NO_ACTIVE: u8 = u8::MAX;
 
 pub struct SessionMux {
     terminal: Rc<LFBTerminal>,
-    /// Manager `ctl` record reader (pollable active-session state).
+    /// Manager `ctl` record reader (pollable live-session snapshot).
     manager_ctl: Option<usize>,
     /// Manager `cmd` FIFO writer (UI commands emulator -> manager).
     manager_cmd: Option<usize>,
-    /// Manager `event` FIFO reader (create/destroy notifications).
-    manager_event: Option<usize>,
     sessions: BTreeMap<u8, SessionScreen>,
     active: u8,
+    /// Generation of the last snapshot applied, so unchanged snapshots are
+    /// skipped. `None` until the first published snapshot is seen.
+    last_generation: Option<u8>,
 }
 
 impl SessionMux {
@@ -60,65 +63,26 @@ impl SessionMux {
             terminal,
             manager_ctl: None,
             manager_cmd: None,
-            manager_event: None,
             sessions: BTreeMap::new(),
             active: NO_ACTIVE,
+            last_generation: None,
         }
     }
 
     /// Connect to the manager namespace.
     ///
-    /// Order matters for the FIFO rendezvous: open the `event` reader first (so
-    /// the manager's `event` writer open can complete), then the `cmd` writer
-    /// (blocks until the manager's `cmd` reader is present), then the pollable
-    /// `ctl` record.
+    /// The only rendezvous is the `cmd` FIFO: opening it WRITEONLY blocks until
+    /// the manager's `cmd` reader is present. The `ctl` record is a pollable
+    /// tmpfs file with no rendezvous, so it is opened afterwards.
     pub fn connect(&mut self) {
-        self.manager_event = naming::open(
-            &manager::event_path(),
-            OpenOptions::READONLY | OpenOptions::NONBLOCK,
-        )
-        .ok();
         self.manager_cmd = naming::open(&manager::cmd_path(), OpenOptions::WRITEONLY).ok();
         self.manager_ctl = naming::open(&manager::ctl_path(), OpenOptions::READWRITE).ok();
     }
 
-    /// Drain manager create/destroy events and update the session set.
-    pub fn poll_events(&mut self) {
-        let Some(handle) = self.manager_event else {
-            return;
-        };
-
-        loop {
-            let mut frame = [0u8; 2];
-            let mut got = naming::read(handle, &mut frame).unwrap_or(0);
-            if got == 0 {
-                break;
-            }
-            // Complete a possibly torn 2-byte frame (the manager always writes
-            // whole frames, so this stays aligned). We only get here with one
-            // byte read, so the tail is a single byte: one more non-blocking
-            // read returns 0 (nothing available yet) or 1 (frame completed).
-            if got < frame.len() {
-                got += naming::read(handle, &mut frame[got..]).unwrap_or(0);
-            }
-
-            // Don't act on a frame we couldn't finish reading; parsing a torn
-            // frame would consume the first byte and lose sync with the writer.
-            if got < frame.len() {
-                break;
-            }
-
-            match frame[0] {
-                manager::event::CREATED => self.add_session(frame[1]),
-                manager::event::DESTROYED => self.remove_session(frame[1]),
-                _ => {}
-            }
-        }
-    }
-
-    /// Poll the manager `ctl` record and switch the rendered session if the
-    /// active id changed.
-    pub fn poll_active(&mut self) {
+    /// Poll the manager `ctl` snapshot: skip if the generation is unchanged,
+    /// otherwise diff the live-session set against the local map (add/remove
+    /// endpoints) and then apply the active id.
+    pub fn poll_snapshot(&mut self) {
         let Some(handle) = self.manager_ctl else {
             return;
         };
@@ -128,9 +92,32 @@ impl SessionMux {
         if !record.is_published() {
             return;
         }
+        if self.last_generation == Some(record.generation) {
+            return;
+        }
+
+        // Diff membership before touching the active id, so a newly announced id
+        // has its endpoints open before it can be selected.
+        for id in record.live_ids() {
+            if !self.sessions.contains_key(&id) {
+                self.add_session(id);
+            }
+        }
+        let stale: alloc::vec::Vec<u8> = self
+            .sessions
+            .keys()
+            .copied()
+            .filter(|id| !record.is_live(*id))
+            .collect();
+        for id in stale {
+            self.remove_session(id);
+        }
+
         if record.active_id != self.active && self.sessions.contains_key(&record.active_id) {
             self.switch_to(record.active_id);
         }
+
+        self.last_generation = Some(record.generation);
     }
 
     /// Drain every session's output: feed it to that session's semantic model

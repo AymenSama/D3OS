@@ -10,10 +10,10 @@
    ║ a shell per session, tagging each shell with the `D3OS_TERM_SESSION`    ║
    ║ env descriptor so the shell and its children resolve the right session. ║
    ║                                                                         ║
-   ║ It coordinates with the emulator over `/term/manager/{ctl,cmd,event}`:  ║
-   ║   - it publishes the active session id on the `ctl` record,             ║
-   ║   - it consumes UI commands (new/close/next/prev tab) on `cmd`,         ║
-   ║   - it announces session create/destroy on `event`.                     ║
+   ║ It coordinates with the emulator over `/term/manager/{ctl,cmd}`:        ║
+   ║   - it publishes the authoritative live-session snapshot (active id +   ║
+   ║     generation + 256-bit live mask) on the `ctl` record,                ║
+   ║   - it consumes UI commands (new/close/next/prev tab) on `cmd`.         ║
    ║                                                                         ║
    ║ A per-session supervisor thread restarts a session's shell when it      ║
    ║ exits, and stops once the session is closed.                            ║
@@ -32,7 +32,7 @@ use alloc::vec::Vec;
 use concurrent::thread;
 use naming::shared_types::OpenOptions;
 use spin::Mutex;
-use terminal::manager::{self, cmd, event, ManagerCtl};
+use terminal::manager::{self, cmd, ManagerCtl};
 use terminal::session::{Session, SESSION_DESCRIPTOR_KEY};
 
 #[allow(unused_imports)]
@@ -40,12 +40,11 @@ use runtime::*;
 
 /// Maximum number of concurrent sessions.
 ///
-/// Current limit: open handles live in the kernel's single global
-/// `OPEN_OBJECTS` table (cap `0x1000`, no per-process binding), and each live
-/// session costs persistent emulator endpoints plus the per-app handles that
-/// leak on exit. Until the handle table is bound per process, the manager caps
-/// concurrent sessions and refuses further `NewTab` requests to stay within the
-/// shared budget.
+/// This cap is a drain-all / memory / supervisor cost bound:
+/// every live session forces the emulator to drain its bounded `out` pipe each loop,
+/// keeps a per-session screen model resident, and runs a per-session supervisor thread.
+/// Ids are `u8` and never reused within a boot, so the snapshot represents a set with holes
+/// (not slots 0..7); this number bounds concurrency, not the id space.
 const MAX_SESSIONS: usize = 8;
 
 /// Per-session bookkeeping kept by the manager.
@@ -79,20 +78,17 @@ fn set_shell_tid(id: u8, tid: usize) {
     }
 }
 
-/// Publish the current active session and counters on the manager `ctl` record.
+/// Publish the authoritative live-session snapshot on the manager `ctl` record:
+/// the active id, live count, a freshly bumped generation, and the live mask.
 fn publish_ctl(ctl: usize) {
-    let (active, count, generation) = {
+    let (active, count, generation, mask) = {
         let mut state = STATE.lock();
         state.generation = state.generation.wrapping_add(1);
         let count = state.sessions.len() as u8;
-        (state.active, count, state.generation)
+        let mask = manager::live_mask_from_ids(state.sessions.keys().copied());
+        (state.active, count, state.generation, mask)
     };
-    let _ = manager::write_ctl(ctl, &ManagerCtl::new(active, count, generation));
-}
-
-/// Send a 2-byte `[opcode, id]` event frame to the emulator.
-fn emit_event(event_w: usize, opcode: u8, id: u8) {
-    let _ = naming::write(event_w, &[opcode, id]);
+    let _ = manager::write_ctl(ctl, &ManagerCtl::new(active, count, generation, mask));
 }
 
 /// Restart loop for a single session's shell.
@@ -131,17 +127,17 @@ fn spawn_supervisor(id: u8) {
     thread::create(move || supervise(id));
 }
 
-fn handle_command(command: u8, ctl: usize, event_w: usize) {
+fn handle_command(command: u8, ctl: usize) {
     match command {
-        cmd::NEW_TAB => new_tab(ctl, event_w),
-        cmd::CLOSE_ACTIVE => close_active(ctl, event_w),
+        cmd::NEW_TAB => new_tab(ctl),
+        cmd::CLOSE_ACTIVE => close_active(ctl),
         cmd::NEXT_TAB => switch_relative(ctl, 1),
         cmd::PREV_TAB => switch_relative(ctl, -1),
         _ => {}
     }
 }
 
-fn new_tab(ctl: usize, event_w: usize) {
+fn new_tab(ctl: usize) {
     let id = {
         let mut state = STATE.lock();
         let live = state.sessions.len();
@@ -156,13 +152,12 @@ fn new_tab(ctl: usize, event_w: usize) {
     };
 
     let _ = Session::with_id(id as usize).create();
-    emit_event(event_w, event::CREATED, id);
     spawn_supervisor(id);
     publish_ctl(ctl);
 }
 
-fn close_active(ctl: usize, event_w: usize) {
-    let (closed, shell_tid) = {
+fn close_active(ctl: usize) {
+    let shell_tid = {
         let mut state = STATE.lock();
         // Always keep at least one session alive.
         if state.sessions.len() <= 1 {
@@ -177,7 +172,7 @@ fn close_active(ctl: usize, event_w: usize) {
         if let Some(&next) = state.sessions.keys().next() {
             state.active = next;
         }
-        (id, shell_tid)
+        shell_tid
     };
 
     // Terminate the closed session's shell so its supervisor's join() returns
@@ -185,7 +180,6 @@ fn close_active(ctl: usize, event_w: usize) {
     if shell_tid != 0 {
         thread::kill(shell_tid);
     }
-    emit_event(event_w, event::DESTROYED, closed);
     publish_ctl(ctl);
 }
 
@@ -225,29 +219,23 @@ pub fn main() {
         state.next_id = 1;
     }
     publish_ctl(ctl);
+    spawn_supervisor(0);
 
     // Launch the renderer. It connects back to the manager namespace and opens
-    // its endpoints for each announced session.
+    // its endpoints for each session it finds in the `ctl` snapshot.
     thread::start_application("terminal_emulator", Vec::new())
         .expect("failed to start terminal_emulator");
 
-    // Open the coordination FIFOs. The event writer rendezvous with the
-    // emulator's event reader; the cmd reader is non-blocking so the command
-    // loop doesn't stall when no key has been pressed.
-    let event_w = naming::open(&manager::event_path(), OpenOptions::WRITEONLY)
-        .expect("failed to open manager event");
+    // Open the command FIFO reader. the emulator's `cmd` writer open blocks
+    // until this reader is present.
+    // It is non-blocking so the command loop doesn't stall when no key has been pressed.
     let cmd_r = naming::open(&manager::cmd_path(), OpenOptions::READONLY | OpenOptions::NONBLOCK)
         .expect("failed to open manager cmd");
-
-    // Announce the initial session and start its shell supervisor.
-    emit_event(event_w, event::CREATED, 0);
-    spawn_supervisor(0);
-
     // Command loop: react to UI commands from the emulator.
     loop {
         let mut byte = [0u8; 1];
         if let Ok(1) = naming::read(cmd_r, &mut byte) {
-            handle_command(byte[0], ctl, event_w);
+            handle_command(byte[0], ctl);
         }
         thread::sleep(20);
     }
