@@ -15,6 +15,7 @@ use uuid::{ContextV7, Timestamp, Uuid};
 use core::ops::Deref;
 use core::sync::atomic::Ordering::Relaxed;
 use crate::process::core_local_storage::scheduler;
+use crate::process::scheduler;
 use crate::{network, now, process_manager, timer};
 use crate::memory::pages::Paging;
 use crate::memory::vmm::VirtualAddressSpace;
@@ -110,12 +111,9 @@ impl Process {
         process_manager().write().exit(self.id);
     }
 
-    /// Return the ids of all threads of the process
+    /// Return the ids of all threads of the process (across all cores).
     pub fn thread_ids(&self) -> Vec<usize> {
-        scheduler().active_thread_ids().iter()
-            .filter(|&&thread_id| {
-                scheduler().thread(thread_id).is_some_and(|thread| thread.process().id() == self.id)
-            }).copied().collect()
+        scheduler::thread_ids_of_process(self.id)
     }
 
     pub fn kill_all_threads_but_current(&self) {

@@ -20,6 +20,7 @@ use crate::memory::vma::VmaType;
 use crate::process::core_local_storage::scheduler;
 use crate::process::process::Process;
 use crate::process::process_stats::ProcStat;
+use crate::process::scheduler;
 
 pub struct ProcessManager {
     active_processes: Vec<Arc<Process>>,
@@ -129,43 +130,66 @@ impl ProcessManager {
         }
     }
 
-    /// Exit a process by its id
-    pub fn exit(&mut self, process_id: Uuid) {
-        let index = self
+    /// Remove `process_id` from the active set and reclaim its resources.
+    ///
+    /// No-op (returns `false`) if it was already torn down: an explicit
+    /// `Process::exit` may have run while cooperatively-killed siblings were
+    /// still winding down, and each of those siblings still passes through the
+    /// last-thread hook in `Scheduler::exit`. This is what makes teardown
+    /// exactly-once.
+    pub(crate) fn finalize_exit(&mut self, process_id: Uuid) -> bool {
+        let Some(index) = self
             .active_processes
             .iter()
             .position(|process| process.id() == process_id)
-            .expect("Process: Trying to exit a non-existent process!");
+        else {
+            return false;
+        };
 
         let process = Arc::clone(&self.active_processes[index]);
-        process.kill_all_threads_but_current();
-
         self.active_processes.swap_remove(index);
         self.exited_processes.push(process);
 
-        // After sibling threads are gone, before this thread exits: Pipe::close
-        // needs a live caller, and nothing should open handles behind the sweep.
+        // Last: Pipe::close needs a live caller, and nothing should open
+        // handles behind the sweep.
         crate::naming::api::close_handles_for_process(process_id);
+        true
     }
 
-    /// Kill a process by its id
-    pub fn kill(&mut self, process_id: Uuid) {
-        let index = self
+    /// Exit a process by its id: tear it down regardless of how many threads
+    /// are still alive. Called by a process's authoritative thread via
+    /// `Process::exit`.
+    pub fn exit(&mut self, process_id: Uuid) {
+        if !self.is_active_process(process_id) {
+            return;
+        }
+
+        // Forcibly end every other thread while the process is still in the
+        // active set; the victims exit via a bare `Scheduler::exit`.
+        if let Some(process) = self
             .active_processes
             .iter()
-            .position(|process| process.id() == process_id)
-            .expect("Process: Trying to kill a non-existent process!");
+            .find(|process| process.id() == process_id)
+            .map(Arc::clone)
+        {
+            process.kill_all_threads_but_current();
+        }
 
-        let process = Arc::clone(&self.active_processes[index]);
-        for thread_id in process.thread_ids() {
+        self.finalize_exit(process_id);
+    }
+
+    /// Kill a process by its id. Like `exit`, but the caller is not one of the
+    /// process's threads, so every thread is killed.
+    pub fn kill(&mut self, process_id: Uuid) {
+        if !self.is_active_process(process_id) {
+            return;
+        }
+
+        for thread_id in scheduler::thread_ids_of_process(process_id) {
             scheduler().kill(thread_id);
         }
 
-        self.active_processes.swap_remove(index);
-        self.exited_processes.push(process);
-
-        // See `exit` for why this is last.
-        crate::naming::api::close_handles_for_process(process_id);
+        self.finalize_exit(process_id);
     }
 
     /// Drop processes that exited at least one cleanup cycle ago.

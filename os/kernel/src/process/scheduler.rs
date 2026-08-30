@@ -25,7 +25,7 @@
    ╚═════════════════════════════════════════════════════════════════════════╝
 */
 use crate::process::thread::{Thread, ThreadState};
-use crate::{allocator, apic, per_cpu_ref, timer, tss};
+use crate::{allocator, apic, per_cpu_ref, process_manager, timer, tss};
 use alloc::collections::VecDeque;
 use alloc::string::String;
 use alloc::sync::Arc;
@@ -53,25 +53,47 @@ use crate::process::core_local_storage::{cls, current_core_id, preempt_is_disabl
 pub static THREAD_ID_COUNTER: AtomicUsize = AtomicUsize::new(1);
 static ACTIVE_CPUS: AtomicU32 = AtomicU32::new(1);  //BP automatically
 
-/// Global set of "alive" thread IDs (across all cores).
-/// Presence means: joining on this tid should block (unless it exits concurrently).
-static ACTIVE_TIDS: Once<Mutex<Map<usize, ()>>> = Once::new();
+/// Global set of "alive" thread IDs (across all cores), each mapped to its
+/// owning process id. Presence means: joining on this tid should block (unless
+/// it exits concurrently). The pid tag lets a dying thread determine whether it
+/// is the last live thread of its process (see `mark_thread_dead_report_last`).
+static ACTIVE_TIDS: Once<Mutex<Map<usize, Uuid>>> = Once::new();
 
 #[inline]
-pub fn active_tids() -> &'static Mutex<Map<usize, ()>> {
+pub fn active_tids() -> &'static Mutex<Map<usize, Uuid>> {
     ACTIVE_TIDS.call_once(|| Mutex::new(Map::new()))
 }
 
 #[inline]
-fn mark_thread_alive(tid: usize) {
+fn mark_thread_alive(tid: usize, pid: Uuid) {
     let mut set = active_tids().lock();
-    set.insert(tid, ());
+    set.insert(tid, pid);
 }
 
-#[inline]
-fn mark_thread_dead(tid: usize) {
+/// Deregister `tid`. Returns the owning pid iff this was the last live thread
+/// of a user process, i.e. the caller must run process-level teardown.
+/// Remove and check happen under one lock acquisition: two siblings exiting
+/// concurrently must not both observe the other and skip teardown.
+fn mark_thread_dead_report_last(tid: usize) -> Option<Uuid> {
     let mut set = active_tids().lock();
-    set.remove(&tid);
+    let pid = set.remove(&tid)?;
+    if pid.is_nil() {
+        return None; // kernel process is never torn down
+    }
+    if set.iter().any(|entry| entry.1 == pid) {
+        return None;
+    }
+    Some(pid)
+}
+
+/// Return the ids of all live threads belonging to `pid`, across all cores.
+pub fn thread_ids_of_process(pid: Uuid) -> Vec<usize> {
+    active_tids()
+        .lock()
+        .iter()
+        .filter(|entry| entry.1 == pid)
+        .map(|entry| entry.0)
+        .collect()
 }
 
 #[inline]
@@ -260,7 +282,7 @@ impl Scheduler {
     /// Insert `thread` into the ready queue of the scheduler
     pub fn ready(&self, thread: Arc<Thread>) {
         let id = thread.id();
-        mark_thread_alive(id);
+        mark_thread_alive(id, thread.process().id());
 
         // If we get the lock on 'self.state' but not on 'self.join_map' the system hangs.
         // The scheduler is not able to switch threads anymore, because of 'self.state' is locked,
@@ -397,30 +419,36 @@ impl Scheduler {
 
     /// Exit calling thread.
     pub fn exit(&self) -> ! {
-        let mut ready_state = self.get_ready_state();
-        let current= Scheduler::current(&ready_state);
+        let tid = self.current_thread().id();
 
-        // Mark dead globally *before* waking joiners, so joiners racing in will observe "dead"
-        mark_thread_dead(current.id());
-        self.unjoin(current.id(), &mut ready_state);
+        // Mark dead globally *before* waking joiners, so joiners racing in will
+        // observe "dead". If this was the last live thread of a user process,
+        // run process-level teardown here. No scheduler lock is held: teardown
+        // takes process_manager(write) and reaches back into naming and the
+        // scheduler, so the process_manager(write) -> naming -> scheduler
+        // lock order holds.
+        if let Some(pid) = mark_thread_dead_report_last(tid) {
+            process_manager().write().finalize_exit(pid);
+        }
+
+        let mut ready_state = self.get_ready_state();
+        self.unjoin(tid, &mut ready_state);
 
         dec_rq_len();
-        drop(current); // Decrease Rc manually, because block() does not return
         self.block_and_switch(ready_state);
         unreachable!()
     }
 
-    /// If the current thread was asked to die, run process/thread exit on this
-    /// stack so syscall locks are released first. Never returns when killed.
+    /// If the current thread was asked to die, exit on this stack so syscall
+    /// locks are released first. A killed thread is exactly a cooperative
+    /// `ThreadExit`; process-level teardown (if this is the process's last
+    /// thread) happens inside `exit`. Never returns when killed.
     pub fn exit_if_killed(&self) {
         let Some(thread) = self.try_current_thread() else {
             return;
         };
         if !thread.is_kill_requested() {
             return;
-        }
-        if !thread.is_kernel_thread() {
-            thread.process().exit();
         }
         drop(thread);
         self.exit();
