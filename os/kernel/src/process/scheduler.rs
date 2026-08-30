@@ -465,6 +465,7 @@ impl Scheduler {
         }
 
         if self.kill_locally(thread_id, &mut *ready_state) == false {
+            info!("cpu{}: kill target tid={} not local, broadcasting Kill", current_core_id(), thread_id);
             schedule_on_all_others(MessageItem::Cmd(MessageCmd::Kill {tid: thread_id}))
         }
     }
@@ -1038,7 +1039,9 @@ impl Scheduler {
             // if you have this thread, kill it
             MessageCmd::Kill { tid } => {
                 if is_thread_alive(tid) == false { return; }
-                self.kill_locally(tid, state);
+                if self.kill_locally(tid, state) {
+                    info!("cpu{}: serviced remote Kill for tid={}", current_core_id(), tid);
+                }
             }
         }
     }
